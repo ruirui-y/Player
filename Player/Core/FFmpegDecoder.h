@@ -29,6 +29,7 @@ public:
     AVFormatContext* GetFormatContext() const;
     AVCodecContext* GetCodecContext() const;
     bool        IsHardwareDecoding() const;
+    double GetFrameRate() const;   // 获取视频帧率
 
 private:
     AVFormatContext* fmt_ctx_{ nullptr };

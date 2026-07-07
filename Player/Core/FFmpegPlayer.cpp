@@ -123,7 +123,8 @@ void FFmpegPlayer::DecodeLoop()
 
     // 假设视频大约是 30 FPS，每帧间隔约 33 毫秒
     // 我们给一个粗略的延时，防止 GUI 线程被事件轰炸卡死
-    const int target_frame_delay_ms = 33;
+    double fps = decoder_->GetFrameRate();
+    int target_frame_delay_ms = (fps > 0) ? (int)(1000.0 / fps) : 33;
 
     while (playing_) {
         if (paused_) {
@@ -138,6 +139,9 @@ void FFmpegPlayer::DecodeLoop()
         int ret = decoder_->ReadFrame(frame);
 
         if (ret < 0) {
+            qDebug() << "DecodeLoop: ReadFrame returned" << ret
+                << "AVERROR_EOF =" << AVERROR_EOF
+                << "frame_count =" << frame_count;
             if (ret == AVERROR_EOF) {
                 emit SigFinished();
             }

@@ -43,6 +43,7 @@ int main(int argc, char* argv[])
         });
 
     QString videoPath = "H:/YJJ/Project/Player/Player/Movie/hevc_8k60P_bilibili_1.mp4";
+    // QString videoPath = "H:/YJJ/Project/Player/Player/Movie/huanyou.mp4";
     if (player.OpenFile(videoPath))
     {
         QTimer::singleShot(500, [&]()

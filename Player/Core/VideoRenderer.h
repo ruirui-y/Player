@@ -47,6 +47,11 @@ private:
     ID3D11PixelShader* pixel_shader_{ nullptr };
     ID3D11SamplerState* sampler_linear_{ nullptr };
 
+    ID3D11Texture2D* staging_y_texture_{ nullptr };      // Y 平面纹理（R8_UNORM）
+    ID3D11Texture2D* staging_uv_texture_{ nullptr };     // UV 平面纹理（R8G8_UNORM）
+    ID3D11ShaderResourceView* srv_y_{ nullptr };          // Y SRV
+    ID3D11ShaderResourceView* srv_uv_{ nullptr };         // UV SRV
+
     bool InitShaders(); // 声明一个初始化 Shader 的方法
 };
 

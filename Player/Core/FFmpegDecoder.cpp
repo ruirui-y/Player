@@ -151,29 +151,51 @@ int FFmpegDecoder::ReadFrame(AVFrame* frame)
     AVCodecContext* ctx = static_cast<AVCodecContext*>(codec_ctx_);
     AVFormatContext* fmt = static_cast<AVFormatContext*>(fmt_ctx_);
 
-    while (true) {
+    // ---- 先尝试收帧（解码器可能还有缓存的帧） ----
+    int ret = avcodec_receive_frame(ctx, frame);
+    if (ret == 0) return 0;                   // 成功收到一帧
+    if (ret == AVERROR_EOF) return ret;        // 解码器已 flush 完毕
+
+    // ---- EAGAIN：需要送更多数据给解码器 ----
+    while (ret == AVERROR(EAGAIN))
+    {
         AVPacket* pkt = av_packet_alloc();
-        int ret = av_read_frame(fmt, pkt);
+        int read_ret = av_read_frame(fmt, pkt);
 
-        if (ret < 0) {
+        if (read_ret < 0)
+        {
+            // 文件读完了，发送 NULL 包 flush 解码器
             av_packet_free(&pkt);
-            return ret;
+            avcodec_send_packet(ctx, nullptr);
+            break;
         }
 
-        if (pkt->stream_index == video_stream_idx_) {
-            ret = avcodec_send_packet(ctx, pkt);
-            if (ret < 0) { av_packet_free(&pkt); continue; }
-
-            ret = avcodec_receive_frame(ctx, frame);
+        if (pkt->stream_index == video_stream_idx_)
+        {
+            int send_ret = avcodec_send_packet(ctx, pkt);
             av_packet_free(&pkt);
 
-            if (ret == 0) return 0;
-            if (ret == AVERROR(EAGAIN)) continue;
-            if (ret == AVERROR_EOF) return ret;
+            // 发送成功后，再试一次收帧
+            if (send_ret >= 0 || send_ret == AVERROR(EAGAIN))
+            {
+                ret = avcodec_receive_frame(ctx, frame);
+                if (ret == 0) return 0;       // 成功解码一帧
+                if (ret == AVERROR_EOF) return ret;
+                // ret == EAGAIN → 继续循环读包
+            }
         }
-        else {
+        else
+        {
             av_packet_free(&pkt);
         }
+    }
+
+    // ---- flush 阶段：吐出解码器剩余的帧 ----
+    while (true)
+    {
+        ret = avcodec_receive_frame(ctx, frame);
+        if (ret == 0) return 0;
+        return AVERROR_EOF;                   // 全部解完
     }
 }
 
@@ -210,3 +232,15 @@ AVRational FFmpegDecoder::GetVideoTimeBase() const {
 AVFormatContext* FFmpegDecoder::GetFormatContext() const { return static_cast<AVFormatContext*>(fmt_ctx_); }
 AVCodecContext* FFmpegDecoder::GetCodecContext() const { return static_cast<AVCodecContext*>(codec_ctx_); }
 bool FFmpegDecoder::IsHardwareDecoding() const { return is_hardware_; }
+double FFmpegDecoder::GetFrameRate() const
+{
+    if (!fmt_ctx_ || video_stream_idx_ < 0) return 30.0;
+    AVStream* stream = static_cast<AVFormatContext*>(fmt_ctx_)->streams[video_stream_idx_];
+    if (stream->avg_frame_rate.den > 0 && stream->avg_frame_rate.num > 0)
+        return av_q2d(stream->avg_frame_rate);
+    if (stream->r_frame_rate.den > 0 && stream->r_frame_rate.num > 0)
+        return av_q2d(stream->r_frame_rate);
+    if (stream->codecpar->framerate.den > 0 && stream->codecpar->framerate.num > 0)
+        return av_q2d(stream->codecpar->framerate);
+    return 30.0;
+}

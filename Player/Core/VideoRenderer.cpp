@@ -58,6 +58,10 @@ VideoRenderer::~VideoRenderer()
         sampler_linear_->Release();
         sampler_linear_ = nullptr;
     }
+    if (srv_uv_) { srv_uv_->Release(); srv_uv_ = nullptr; }
+    if (srv_y_) { srv_y_->Release(); srv_y_ = nullptr; }
+    if (staging_uv_texture_) { staging_uv_texture_->Release(); staging_uv_texture_ = nullptr; }
+    if (staging_y_texture_) { staging_y_texture_->Release(); staging_y_texture_ = nullptr; }
     // =================================================
 
     ReleaseD3D11();
@@ -153,6 +157,10 @@ ID3D11Device* VideoRenderer::InitD3D11(int width, int height)
 
 void VideoRenderer::ReleaseD3D11()
 {
+    if (srv_uv_) { srv_uv_->Release(); srv_uv_ = nullptr; }
+    if (srv_y_) { srv_y_->Release(); srv_y_ = nullptr; }
+    if (staging_uv_texture_) { staging_uv_texture_->Release(); staging_uv_texture_ = nullptr; }
+    if (staging_y_texture_) { staging_y_texture_->Release(); staging_y_texture_ = nullptr; }
     if (swapchain_) { static_cast<IDXGISwapChain*>(swapchain_)->Release(); swapchain_ = nullptr; }
     if (d3d11_ctx_) { d3d11_ctx_->Release(); d3d11_ctx_ = nullptr; }
     if (d3d11_device_) { d3d11_device_->Release(); d3d11_device_ = nullptr; }
@@ -168,7 +176,7 @@ bool VideoRenderer::CreateSwapChain(ID3D11Device* device, int width, int height)
 
     d3d11_device_ = device;
     device->AddRef();
-    device->GetImmediateContext(&d3d11_ctx_); // 关键：获取 Context 用于后续的 CopySubresourceRegion 或 Shader 渲染
+    device->GetImmediateContext(&d3d11_ctx_);
 
     IDXGIDevice* dxgi_dev = nullptr;
     IDXGIAdapter* adapter = nullptr;
@@ -215,31 +223,101 @@ bool VideoRenderer::CreateSwapChain(ID3D11Device* device, int width, int height)
     }
     // =========================================================
 
-    qDebug() << "[VideoRenderer] 交换链与着色器创建成功，纯 GPU 零拷贝管线已打通！";
+    // ---- 创建两个独立的中转纹理：Y 平面 + UV 平面 ----
+    D3D11_TEXTURE2D_DESC tex_desc = {};
+    tex_desc.MipLevels = 1;
+    tex_desc.ArraySize = 1;
+    tex_desc.SampleDesc.Count = 1;
+    tex_desc.Usage = D3D11_USAGE_DYNAMIC;
+    tex_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    // Y 平面纹理（R8_UNORM，尺寸跟视频一样）
+    tex_desc.Width = width;
+    tex_desc.Height = height;
+    tex_desc.Format = DXGI_FORMAT_R8_UNORM;
+    if (FAILED(d3d11_device_->CreateTexture2D(&tex_desc, nullptr, &staging_y_texture_)))
+    {
+        qDebug() << "[VideoRenderer] 创建 Y 平面纹理失败";
+        return false;
+    }
+
+    // UV 平面纹理（R8G8_UNORM，NV12 的 UV 是宽高各一半）
+    tex_desc.Width = width / 2;
+    tex_desc.Height = height / 2;
+    tex_desc.Format = DXGI_FORMAT_R8G8_UNORM;
+    if (FAILED(d3d11_device_->CreateTexture2D(&tex_desc, nullptr, &staging_uv_texture_)))
+    {
+        qDebug() << "[VideoRenderer] 创建 UV 平面纹理失败";
+        return false;
+    }
+
+    // ---- 创建 SRV ----
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels = 1;
+
+    srv_desc.Format = DXGI_FORMAT_R8_UNORM;
+    if (FAILED(d3d11_device_->CreateShaderResourceView(staging_y_texture_, &srv_desc, &srv_y_)))
+    {
+        qDebug() << "[VideoRenderer] 创建 Y SRV 失败";
+        return false;
+    }
+
+    srv_desc.Format = DXGI_FORMAT_R8G8_UNORM;
+    if (FAILED(d3d11_device_->CreateShaderResourceView(staging_uv_texture_, &srv_desc, &srv_uv_)))
+    {
+        qDebug() << "[VideoRenderer] 创建 UV SRV 失败";
+        return false;
+    }
+
+    qDebug() << "[VideoRenderer] 交换链、着色器、双平面纹理全部就绪，纯 GPU 管线已打通！";
     return true;
 }
 
-// ---- 统一渲染入口：混合管线适配 ----
 void VideoRenderer::Render(AVFrame* frame)
 {
     if (!frame) return;
 
     int fmt = frame->format;
 
-    // 【核心揭秘】硬解出来的格式是 D3D11 专属的 NV12 纹理，不能直接 Copy 到 RGB 的交换链！
-    // 真正的全 GPU 管线需要写 HLSL Shader。现在我们暂时走“GPU显存下载 -> CPU转RGB -> 显示”的混合管线
+    // 纯 GPU 管线：D3D11 格式 + 着色器 + SRV 就绪 → 走着色器渲染
+    if (fmt == AV_PIX_FMT_D3D11 && swapchain_ && pixel_shader_ && srv_y_)
+    {
+        RenderHardware(frame);
+        return;
+    }
 
-    // 把现代的 AV_PIX_FMT_D3D11 也加到拦截列表里
-    if (fmt == AV_PIX_FMT_D3D11 || fmt == AV_PIX_FMT_D3D11VA_VLD || fmt == AV_PIX_FMT_DXVA2_VLD)
+    // D3D11 格式但 GPU 管线不可用（SRV 创建失败）→ 下载到 CPU 后走软解
+    if (fmt == AV_PIX_FMT_D3D11)
     {
         AVFrame* sw_frame = av_frame_alloc();
         if (sw_frame)
         {
-            // 将 GPU 显存中的 NV12 画面下载到 CPU 系统内存
             int ret = av_hwframe_transfer_data(sw_frame, frame, 0);
             if (ret == 0)
             {
-                RenderSoftware(sw_frame); // 交给 sws_scale 进行 YUV->RGB 转换并发射 QImage
+                RenderSoftware(sw_frame);
+            }
+            else
+            {
+                qDebug() << "[VideoRenderer] 硬件帧下载到系统内存失败:" << ret;
+            }
+            av_frame_free(&sw_frame);
+        }
+        return;
+    }
+
+    // DXVA2 格式 → 下载到 CPU 后走软解
+    if (fmt == AV_PIX_FMT_D3D11VA_VLD || fmt == AV_PIX_FMT_DXVA2_VLD)
+    {
+        AVFrame* sw_frame = av_frame_alloc();
+        if (sw_frame)
+        {
+            int ret = av_hwframe_transfer_data(sw_frame, frame, 0);
+            if (ret == 0)
+            {
+                RenderSoftware(sw_frame);
             }
             else
             {
@@ -256,13 +334,9 @@ void VideoRenderer::Render(AVFrame* frame)
 
 void VideoRenderer::RenderHardware(AVFrame* frame)
 {
-    if (!d3d11_ctx_ || !swapchain_) return;
+    if (!d3d11_ctx_ || !swapchain_ || !srv_y_ || !srv_uv_) return;
 
-    ID3D11Texture2D* dec_tex = (ID3D11Texture2D*)frame->data[0];
-    intptr_t subresource_idx = (intptr_t)frame->data[1];
-    if (!dec_tex) return;
-
-    // 获取交换链的后备缓冲，作为渲染目标 (Render Target)
+    // 获取交换链后备缓冲
     ID3D11Texture2D* backbuffer = nullptr;
     swapchain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbuffer);
 
@@ -270,30 +344,60 @@ void VideoRenderer::RenderHardware(AVFrame* frame)
     d3d11_device_->CreateRenderTargetView(backbuffer, nullptr, &rtv);
     backbuffer->Release();
 
-    // 绑定渲染目标并设置视口
     d3d11_ctx_->OMSetRenderTargets(1, &rtv, nullptr);
     D3D11_VIEWPORT vp = { 0.0f, 0.0f, (float)frame_width_, (float)frame_height_, 0.0f, 1.0f };
     d3d11_ctx_->RSSetViewports(1, &vp);
 
     // ==========================================
-    // 魔法时刻：创建 Y 和 UV 的着色器资源视图 (SRV)
+    // 将帧从 GPU 显存下载到 CPU 内存
     // ==========================================
-    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
-    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY; // FFmpeg 硬解给的是数组
-    srv_desc.Texture2DArray.MipLevels = 1;
-    srv_desc.Texture2DArray.FirstArraySlice = (UINT)subresource_idx; // 指向当前帧
-    srv_desc.Texture2DArray.ArraySize = 1;
+    AVFrame* sw_frame = av_frame_alloc();
+    if (!sw_frame) { rtv->Release(); return; }
 
-    ID3D11ShaderResourceView* srv_y = nullptr;
-    ID3D11ShaderResourceView* srv_uv = nullptr;
+    int ret = av_hwframe_transfer_data(sw_frame, frame, 0);
+    if (ret != 0 || !sw_frame->data[0] || !sw_frame->data[1])
+    {
+        qDebug() << "RenderHardware: av_hwframe_transfer_data failed" << ret;
+        av_frame_free(&sw_frame);
+        rtv->Release();
+        return;
+    }
 
-    // 1. 把纹理当作 R8_UNORM (单通道) 来读取，这就提取了 Y 平面
-    srv_desc.Format = DXGI_FORMAT_R8_UNORM;
-    d3d11_device_->CreateShaderResourceView(dec_tex, &srv_desc, &srv_y);
+    // ==========================================
+    // 将 Y 平面从 CPU 内存上传到 GPU 纹理
+    // ==========================================
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    if (SUCCEEDED(d3d11_ctx_->Map(staging_y_texture_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+    {
+        // Y 平面是单通道，linesize 可能不等于 width（有对齐）
+        int y_height = sw_frame->height;
+        for (int row = 0; row < y_height; row++)
+        {
+            memcpy((uint8_t*)mapped.pData + row * mapped.RowPitch,
+                sw_frame->data[0] + row * sw_frame->linesize[0],
+                sw_frame->width);
+        }
+        d3d11_ctx_->Unmap(staging_y_texture_, 0);
+    }
 
-    // 2. 把纹理当作 R8G8_UNORM (双通道) 来读取，这就提取了 UV 平面
-    srv_desc.Format = DXGI_FORMAT_R8G8_UNORM;
-    d3d11_device_->CreateShaderResourceView(dec_tex, &srv_desc, &srv_uv);
+    // ==========================================
+    // 将 UV 平面从 CPU 内存上传到 GPU 纹理
+    // ==========================================
+    if (SUCCEEDED(d3d11_ctx_->Map(staging_uv_texture_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+    {
+        // UV 平面是双通道（R8G8），高度是视频高度的一半
+        int uv_height = sw_frame->height / 2;
+        int uv_width_bytes = sw_frame->width;  // UV 的 linesize 跟 width 一致（2 字节每像素）
+        for (int row = 0; row < uv_height; row++)
+        {
+            memcpy((uint8_t*)mapped.pData + row * mapped.RowPitch,
+                sw_frame->data[1] + row * sw_frame->linesize[1],
+                uv_width_bytes);
+        }
+        d3d11_ctx_->Unmap(staging_uv_texture_, 0);
+    }
+
+    av_frame_free(&sw_frame);
 
     // ==========================================
     // 渲染管线装配与执行
@@ -304,22 +408,15 @@ void VideoRenderer::RenderHardware(AVFrame* frame)
     d3d11_ctx_->VSSetShader(vertex_shader_, nullptr, 0);
     d3d11_ctx_->PSSetShader(pixel_shader_, nullptr, 0);
 
-    ID3D11ShaderResourceView* srvs[] = { srv_y, srv_uv };
+    ID3D11ShaderResourceView* srvs[] = { srv_y_, srv_uv_ };
     d3d11_ctx_->PSSetShaderResources(0, 2, srvs);
     d3d11_ctx_->PSSetSamplers(0, 1, &sampler_linear_);
 
-    // 发射 3 个顶点，触发我们在 VS 里写的全屏三角形魔法
     d3d11_ctx_->Draw(3, 0);
+    swapchain_->Present(1, 0);
 
-    // 画面上屏
-    swapchain_->Present(0, 0);
-
-    // 清理本帧临时资源
     ID3D11ShaderResourceView* null_srvs[] = { nullptr, nullptr };
-    d3d11_ctx_->PSSetShaderResources(0, 2, null_srvs); // 解除绑定
-
-    srv_y->Release();
-    srv_uv->Release();
+    d3d11_ctx_->PSSetShaderResources(0, 2, null_srvs);
     rtv->Release();
 }
 
