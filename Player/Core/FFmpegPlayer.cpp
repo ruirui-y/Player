@@ -4,16 +4,20 @@
 #include <QDebug>
 #include <chrono>
 
-extern "C" {
+extern "C"
+{
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
 }
 
-FFmpegPlayer::FFmpegPlayer(QObject* parent) : QObject(parent)
+FFmpegPlayer::FFmpegPlayer(QObject* parent)
+    : QObject(parent)
 {
     decoder_ = new FFmpegDecoder();
     renderer_ = new VideoRenderer(this);
-    QObject::connect(renderer_, &VideoRenderer::SigFrameReady, this, &FFmpegPlayer::SigFrameReady);
+    // 软解回退时，渲染器的 QImage 信号转发出去给 MainWindow 显示
+    QObject::connect(renderer_, &VideoRenderer::SigFrameReady,
+        this, &FFmpegPlayer::SigFrameReady);
 }
 
 FFmpegPlayer::~FFmpegPlayer()
@@ -22,17 +26,25 @@ FFmpegPlayer::~FFmpegPlayer()
     delete decoder_;
 }
 
-void FFmpegPlayer::SetVideoHwnd(HWND hwnd) { hwnd_ = hwnd; renderer_->SetHwnd(hwnd); }
+void FFmpegPlayer::SetVideoHwnd(HWND hwnd)
+{
+    hwnd_ = hwnd;
+    renderer_->SetHwnd(hwnd);
+}
 
+// 打开文件：尝试硬解，如果失败回退软解
 bool FFmpegPlayer::OpenFile(const QString& path)
 {
     Stop();
     qDebug() << "\n[FFmpegPlayer] === 开始加载文件 ===";
 
-    if (!decoder_->OpenFile(path, true)) {
+    // ---- 第一步：尝试 D3D11 硬解打开 ----
+    if (!decoder_->OpenFile(path, true))
+    {
         qDebug() << "[FFmpegPlayer] 硬解启动失败，尝试强制软解模式回退";
         decoder_->Close();
-        if (!decoder_->OpenFile(path, false)) {
+        if (!decoder_->OpenFile(path, false))
+        {
             qDebug() << "[FFmpegPlayer] 文件打开彻底失败";
             emit SigError("OpenFile failed");
             return false;
@@ -43,11 +55,15 @@ bool FFmpegPlayer::OpenFile(const QString& path)
     int w = decoder_->GetWidth();
     int h = decoder_->GetHeight();
 
-    qDebug() << "[FFmpegPlayer] 视频信息获取成功 -> 尺寸:" << w << "x" << h << ", 时长:" << duration_ms_ << "ms";
+    qDebug() << "[FFmpegPlayer] 视频信息获取成功 -> 尺寸:" << w << "x" << h
+        << ", 时长:" << duration_ms_ << "ms";
 
-    if (decoder_->IsHardwareDecoding()) {
+    // ---- 第二步：如果硬解成功，从解码器取出 D3D11 设备创建交换链 ----
+    if (decoder_->IsHardwareDecoding())
+    {
         ID3D11Device* device = (ID3D11Device*)decoder_->GetD3D11Device();
-        if (device) {
+        if (device)
+        {
             renderer_->CreateSwapChain(device, w, h);
         }
     }
@@ -60,8 +76,10 @@ bool FFmpegPlayer::OpenFile(const QString& path)
 void FFmpegPlayer::Play()
 {
     if (!decoder_->GetFormatContext()) { emit SigError("no file opened"); return; }
-    if (playing_) {
-        if (paused_) {
+    if (playing_)
+    {
+        if (paused_)
+        {
             qDebug() << "[FFmpegPlayer] 恢复播放";
             paused_ = false;
             emit SigPlayState("playing");
@@ -112,6 +130,7 @@ qint64 FFmpegPlayer::GetDuration() const { return duration_ms_; }
 bool FFmpegPlayer::IsPlaying() const { return playing_.load() && !paused_.load(); }
 bool FFmpegPlayer::IsPaused() const { return paused_.load(); }
 
+// 解码线程主循环
 void FFmpegPlayer::DecodeLoop()
 {
     AVFrame* frame = av_frame_alloc();
@@ -121,28 +140,32 @@ void FFmpegPlayer::DecodeLoop()
     AVRational time_base = decoder_->GetVideoTimeBase();
     int frame_count = 0;
 
-    // 假设视频大约是 30 FPS，每帧间隔约 33 毫秒
-    // 我们给一个粗略的延时，防止 GUI 线程被事件轰炸卡死
+    // 根据视频实际帧率计算每帧间隔，用于帧率控制
     double fps = decoder_->GetFrameRate();
     int target_frame_delay_ms = (fps > 0) ? (int)(1000.0 / fps) : 33;
 
-    while (playing_) {
-        if (paused_) {
+    while (playing_)
+    {
+        // ---- 暂停时休眠，不退出线程 ----
+        if (paused_)
+        {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
 
-        // 记录解这帧之前的系统时间
         auto start_time = std::chrono::steady_clock::now();
 
         av_frame_unref(frame);
         int ret = decoder_->ReadFrame(frame);
 
-        if (ret < 0) {
+        // ---- 文件读完或解码出错 ----
+        if (ret < 0)
+        {
             qDebug() << "DecodeLoop: ReadFrame returned" << ret
                 << "AVERROR_EOF =" << AVERROR_EOF
                 << "frame_count =" << frame_count;
-            if (ret == AVERROR_EOF) {
+            if (ret == AVERROR_EOF)
+            {
                 emit SigFinished();
             }
             break;
@@ -150,24 +173,30 @@ void FFmpegPlayer::DecodeLoop()
 
         frame_count++;
 
-        if (frame->pts != AV_NOPTS_VALUE && fmt) {
-            qint64 pts_ms = static_cast<qint64>(frame->pts * av_q2d(time_base) * 1000.0);
+        // ---- 更新当前播放 PTS ----
+        if (frame->pts != AV_NOPTS_VALUE && fmt)
+        {
+            qint64 pts_ms = static_cast<qint64>(
+                frame->pts * av_q2d(time_base) * 1000.0);
             current_pts_ms_ = pts_ms;
         }
 
-        // 渲染（格式转换与发射信号）
+        // ---- 渲染当前帧（GPU 或 CPU） ----
         renderer_->Render(frame);
 
-        // 【核心修改】计算耗时并补齐休眠时间，控制帧率
+        // ---- 帧率控制：补齐休眠时间 ----
         auto end_time = std::chrono::steady_clock::now();
-        int elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+        int elapsed_ms = std::chrono::duration_cast<
+            std::chrono::milliseconds>(end_time - start_time).count();
 
         int sleep_time = target_frame_delay_ms - elapsed_ms;
-        if (sleep_time > 0) {
+        if (sleep_time > 0)
+        {
             std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
         }
-        else {
-            // 如果解码+转换已经超过了33ms（比如4K转换太慢），稍微喘口气，别把CPU占满
+        else
+        {
+            // 解码+渲染超过帧间隔，稍微歇一秒避免 CPU 满负荷
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
