@@ -1,0 +1,53 @@
+# --- 虚幻引擎核心忽略项 ---
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vscode/
+.vs/
+DemandStation/x64
+DemandStation/Packs
+DemandStation/*.csv
+DemandStation/Movies
+DemandStation/Movie
+./x64
+./x64/Debug
+./x64/Release
+*.xcworkspace
+*.v12.suo
+*.v11.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# --- C++ 编译产生的巨型文件 (针对你的 190GB 报错) ---
+*.pdb
+*.pch
+*.ipch
+*.obj
+*.exe
+*.dll
+
+# --- 平台相关项目文件 ---
+/Platforms/
+
+# --- 外部插件与构建产物 ---
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+
+# --- 杂项 ---
+*.log
+*.tps
+*.bak
+Game
+x64
+/DemandStation/Pack/MiNiWorld/Windows/Configs
+Engine
+Windows
+APKS
+Tools
+/DemandStation/Log.txt
+Pack
+Movie
