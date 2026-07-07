@@ -41,6 +41,13 @@ private:
     void* sws_ctx_{ nullptr };
     int   frame_width_{ 0 };
     int   frame_height_{ 0 };
+
+private:
+    ID3D11VertexShader* vertex_shader_{ nullptr };
+    ID3D11PixelShader* pixel_shader_{ nullptr };
+    ID3D11SamplerState* sampler_linear_{ nullptr };
+
+    bool InitShaders(); // 声明一个初始化 Shader 的方法
 };
 
 #endif // VIDEORENDERER_H

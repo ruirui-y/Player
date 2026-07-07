@@ -1,6 +1,8 @@
 ﻿#include "VideoRenderer.h"
 #include <QDebug>
 
+#include <d3dcompiler.h>
+
 extern "C"
 {
 #include <libavutil/pixfmt.h>
@@ -8,8 +10,58 @@ extern "C"
 #include <libswscale/swscale.h>
 }
 
+const char* shader_code = R"(
+Texture2D texY : register(t0);
+Texture2D texUV : register(t1);
+SamplerState samLinear : register(s0);
+
+struct VS_OUTPUT {
+    float4 Pos : SV_POSITION;
+    float2 Tex : TEXCOORD;
+};
+
+// 顶点着色器：利用顶点 ID 凭空生成一个覆盖全屏的大三角形
+VS_OUTPUT VS(uint id : SV_VertexID) {
+    VS_OUTPUT output;
+    output.Tex = float2((id << 1) & 2, id & 2);
+    output.Pos = float4(output.Tex * float2(2, -2) + float2(-1, 1), 0, 1);
+    return output;
+}
+
+// 像素着色器：采样 Y 和 UV，转换为 RGB
+float4 PS(VS_OUTPUT input) : SV_Target {
+    float y = texY.Sample(samLinear, input.Tex).r;
+    float2 uv = texUV.Sample(samLinear, input.Tex).rg - 0.5;
+
+    // BT.709 色彩转换公式
+    float r = y + 1.5748 * uv.y;
+    float g = y - 0.1873 * uv.x - 0.4681 * uv.y;
+    float b = y + 1.8556 * uv.x;
+
+    return float4(r, g, b, 1.0);
+}
+)";
+
 VideoRenderer::VideoRenderer(QObject* parent) : QObject(parent) {}
-VideoRenderer::~VideoRenderer() { ReleaseD3D11(); }
+VideoRenderer::~VideoRenderer()
+{
+    // === 安全释放 Shader 相关的三个 D3D11 资源 ===
+    if (vertex_shader_) {
+        vertex_shader_->Release();
+        vertex_shader_ = nullptr;
+    }
+    if (pixel_shader_) {
+        pixel_shader_->Release();
+        pixel_shader_ = nullptr;
+    }
+    if (sampler_linear_) {
+        sampler_linear_->Release();
+        sampler_linear_ = nullptr;
+    }
+    // =================================================
+
+    ReleaseD3D11();
+}
 void VideoRenderer::SetHwnd(HWND hwnd) { hwnd_ = hwnd; }
 ID3D11Device* VideoRenderer::GetD3D11Device() const { return d3d11_device_; }
 ID3D11DeviceContext* VideoRenderer::GetD3D11DeviceContext() const { return d3d11_ctx_; }
@@ -116,7 +168,7 @@ bool VideoRenderer::CreateSwapChain(ID3D11Device* device, int width, int height)
 
     d3d11_device_ = device;
     device->AddRef();
-    device->GetImmediateContext(&d3d11_ctx_); // 关键：获取 Context 用于后续的 CopySubresourceRegion
+    device->GetImmediateContext(&d3d11_ctx_); // 关键：获取 Context 用于后续的 CopySubresourceRegion 或 Shader 渲染
 
     IDXGIDevice* dxgi_dev = nullptr;
     IDXGIAdapter* adapter = nullptr;
@@ -155,7 +207,15 @@ bool VideoRenderer::CreateSwapChain(ID3D11Device* device, int width, int height)
     swapchain_ = sc;
     frame_width_ = width;
     frame_height_ = height;
-    qDebug() << "[VideoRenderer] 交换链创建成功，硬解管线打通";
+
+    // === 交换链创建成功后，立刻初始化 Shader 渲染管线 ===
+    if (!InitShaders()) {
+        qDebug() << "[VideoRenderer] 严重错误：Shader 编译或初始化失败！";
+        return false;
+    }
+    // =========================================================
+
+    qDebug() << "[VideoRenderer] 交换链与着色器创建成功，纯 GPU 零拷贝管线已打通！";
     return true;
 }
 
@@ -198,27 +258,69 @@ void VideoRenderer::RenderHardware(AVFrame* frame)
 {
     if (!d3d11_ctx_ || !swapchain_) return;
 
-    // 核心修正：摒弃自定义 Struct，直接取值
     ID3D11Texture2D* dec_tex = (ID3D11Texture2D*)frame->data[0];
     intptr_t subresource_idx = (intptr_t)frame->data[1];
+    if (!dec_tex) return;
 
-    if (!dec_tex) {
-        qDebug() << "[VideoRenderer] 严重错误: frame->data[0] 为空";
-        return;
-    }
-
+    // 获取交换链的后备缓冲，作为渲染目标 (Render Target)
     ID3D11Texture2D* backbuffer = nullptr;
-    HRESULT hr = swapchain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbuffer);
-    if (FAILED(hr)) return;
+    swapchain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbuffer);
 
-    // 核心修正：使用 CopySubresourceRegion 精确拷贝纹理数组中的切片
-    d3d11_ctx_->CopySubresourceRegion(
-        backbuffer, 0, 0, 0, 0,
-        dec_tex, (UINT)subresource_idx, nullptr
-    );
-
-    swapchain_->Present(0, 0);
+    ID3D11RenderTargetView* rtv = nullptr;
+    d3d11_device_->CreateRenderTargetView(backbuffer, nullptr, &rtv);
     backbuffer->Release();
+
+    // 绑定渲染目标并设置视口
+    d3d11_ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+    D3D11_VIEWPORT vp = { 0.0f, 0.0f, (float)frame_width_, (float)frame_height_, 0.0f, 1.0f };
+    d3d11_ctx_->RSSetViewports(1, &vp);
+
+    // ==========================================
+    // 魔法时刻：创建 Y 和 UV 的着色器资源视图 (SRV)
+    // ==========================================
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY; // FFmpeg 硬解给的是数组
+    srv_desc.Texture2DArray.MipLevels = 1;
+    srv_desc.Texture2DArray.FirstArraySlice = (UINT)subresource_idx; // 指向当前帧
+    srv_desc.Texture2DArray.ArraySize = 1;
+
+    ID3D11ShaderResourceView* srv_y = nullptr;
+    ID3D11ShaderResourceView* srv_uv = nullptr;
+
+    // 1. 把纹理当作 R8_UNORM (单通道) 来读取，这就提取了 Y 平面
+    srv_desc.Format = DXGI_FORMAT_R8_UNORM;
+    d3d11_device_->CreateShaderResourceView(dec_tex, &srv_desc, &srv_y);
+
+    // 2. 把纹理当作 R8G8_UNORM (双通道) 来读取，这就提取了 UV 平面
+    srv_desc.Format = DXGI_FORMAT_R8G8_UNORM;
+    d3d11_device_->CreateShaderResourceView(dec_tex, &srv_desc, &srv_uv);
+
+    // ==========================================
+    // 渲染管线装配与执行
+    // ==========================================
+    d3d11_ctx_->IASetInputLayout(nullptr);
+    d3d11_ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    d3d11_ctx_->VSSetShader(vertex_shader_, nullptr, 0);
+    d3d11_ctx_->PSSetShader(pixel_shader_, nullptr, 0);
+
+    ID3D11ShaderResourceView* srvs[] = { srv_y, srv_uv };
+    d3d11_ctx_->PSSetShaderResources(0, 2, srvs);
+    d3d11_ctx_->PSSetSamplers(0, 1, &sampler_linear_);
+
+    // 发射 3 个顶点，触发我们在 VS 里写的全屏三角形魔法
+    d3d11_ctx_->Draw(3, 0);
+
+    // 画面上屏
+    swapchain_->Present(0, 0);
+
+    // 清理本帧临时资源
+    ID3D11ShaderResourceView* null_srvs[] = { nullptr, nullptr };
+    d3d11_ctx_->PSSetShaderResources(0, 2, null_srvs); // 解除绑定
+
+    srv_y->Release();
+    srv_uv->Release();
+    rtv->Release();
 }
 
 void VideoRenderer::RenderSoftware(AVFrame* frame)
@@ -251,4 +353,39 @@ void VideoRenderer::RenderSoftware(AVFrame* frame)
 
     sws_scale(static_cast<SwsContext*>(sws_ctx_), frame->data, frame->linesize, 0, h, dst, &dst_stride);
     emit SigFrameReady(image);
+}
+
+bool VideoRenderer::InitShaders()
+{
+    if (!d3d11_device_) return false;
+
+    ID3DBlob* vs_blob = nullptr;
+    ID3DBlob* ps_blob = nullptr;
+    ID3DBlob* error_blob = nullptr;
+
+    // 编译顶点着色器
+    D3DCompile(shader_code, strlen(shader_code), nullptr, nullptr, nullptr, "VS", "vs_5_0", 0, 0, &vs_blob, &error_blob);
+    if (error_blob) {
+        qDebug() << "VS Compile Error:" << (char*)error_blob->GetBufferPointer();
+        error_blob->Release();
+        return false;
+    }
+    d3d11_device_->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nullptr, &vertex_shader_);
+    vs_blob->Release();
+
+    // 编译像素着色器
+    D3DCompile(shader_code, strlen(shader_code), nullptr, nullptr, nullptr, "PS", "ps_5_0", 0, 0, &ps_blob, &error_blob);
+    d3d11_device_->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr, &pixel_shader_);
+    ps_blob->Release();
+
+    // 创建线性采样器
+    D3D11_SAMPLER_DESC samp_desc = {};
+    samp_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    samp_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samp_desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samp_desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samp_desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    d3d11_device_->CreateSamplerState(&samp_desc, &sampler_linear_);
+
+    return true;
 }

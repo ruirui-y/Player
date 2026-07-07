@@ -42,7 +42,7 @@ int main(int argc, char* argv[])
             qDebug("状态变化: %s", qPrintable(state));
         });
 
-    QString videoPath = "H:/YJJ/Project/Player/Player/Movie/huanyou.mp4";
+    QString videoPath = "H:/YJJ/Project/Player/Player/Movie/hevc_8k60P_bilibili_1.mp4";
     if (player.OpenFile(videoPath))
     {
         QTimer::singleShot(500, [&]()
