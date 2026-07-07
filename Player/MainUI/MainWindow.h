@@ -2,8 +2,6 @@
 
 #include <QtWidgets/QMainWindow>
 #include <QLabel>
-#include <QImage>
-#include "ui_Player.h"
 
 class MainWindow : public QMainWindow
 {
@@ -13,12 +11,13 @@ public:
     MainWindow(QWidget* parent = nullptr);
     ~MainWindow();
 
-    void SetVideoRect(int x, int y, int w, int h);              // 设置画面位置和尺寸
+    void SetVideoRect(int x, int y, int w, int h);   // 设置画面位置和尺寸
+    HWND GetVideoHwnd() const;                        // 返回窗口句柄，给 D3D11 用
 
+    // 软解回退时仍然需要显示 QImage
 public slots:
-    void OnFrameReady(const QImage& image);                     // 接收解码线程发来的一帧画面
+    void OnFrameReady(const QImage& image);
 
 private:
-    Ui::MainWindowClass ui;
-    QLabel* video_label_{ nullptr };                            // 用于显示视频画面的标签
+    QLabel* video_label_{ nullptr };
 };

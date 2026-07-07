@@ -67,8 +67,11 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
-      <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;d3d11.lib;dxgi.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <ClCompile>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">
     <ClCompile>
@@ -99,7 +102,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Core\FFmpegCore.cpp" />
+    <ClCompile Include="Core\FFmpegDecoder.cpp" />
+    <ClCompile Include="Core\FFmpegPlayer.cpp" />
+    <ClCompile Include="Core\VideoRenderer.cpp" />
     <ClCompile Include="TCP\TcpServer.cpp" />
     <QtRcc Include="Player.qrc" />
     <QtUic Include="Player.ui" />
@@ -111,7 +116,13 @@
     <QtMoc Include="TCP\TcpServer.h" />
   </ItemGroup>
   <ItemGroup>
-    <QtMoc Include="Core\FFmpegCore.h" />
+    <ClInclude Include="Core\FFmpegDecoder.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <QtMoc Include="Core\VideoRenderer.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <QtMoc Include="Core\FFmpegPlayer.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

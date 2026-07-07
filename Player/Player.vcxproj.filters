@@ -43,7 +43,13 @@
     <ClCompile Include="TCP\TcpServer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Core\FFmpegCore.cpp">
+    <ClCompile Include="Core\FFmpegDecoder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\VideoRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\FFmpegPlayer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -51,8 +57,16 @@
     <QtMoc Include="TCP\TcpServer.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="Core\FFmpegCore.h">
+    <QtMoc Include="Core\VideoRenderer.h">
       <Filter>Header Files</Filter>
     </QtMoc>
+    <QtMoc Include="Core\FFmpegPlayer.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Core\FFmpegDecoder.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
