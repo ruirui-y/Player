@@ -7,6 +7,8 @@ struct AVFormatContext;     // FFmpeg 解封装上下文（前向声明）
 struct AVCodecContext;      // FFmpeg 解码器上下文（前向声明）
 struct AVFrame;             // FFmpeg 帧结构（前向声明）
 struct AVRational;          // FFmpeg 有理数结构（前向声明）
+struct AVBufferRef;         // FFmpeg 硬解设备上下文（前向声明）
+struct ID3D11Device;        // DirectX11 设备（前向声明）
 
 class FFmpegDecoder
 {
@@ -16,7 +18,7 @@ public:
 
     bool OpenFile(const QString& path,
         bool try_hardware = false);                                                 // 打开文件，true=尝试硬解
-    void* GetD3D11Device() const;                                                   // 返回解码器内部的 ID3D11Device*
+    ID3D11Device* GetD3D11Device() const;                                           // 返回解码器内部的 ID3D11Device*
     void Close();                                                                   // 关闭文件，释放所有 FFmpeg 资源
 
     int  ReadFrame(AVFrame* frame);                                                 // 读一包 → 解一帧，0=有帧 <0=结束
@@ -36,7 +38,7 @@ private:
     AVFormatContext* fmt_ctx_{ nullptr };                                           // 解封装上下文
     AVCodecContext* codec_ctx_{ nullptr };                                          // 解码器上下文
     int              video_stream_idx_{ -1 };                                       // 视频流在文件中的索引
-    void* hw_device_ctx_{ nullptr };                                                // AVBufferRef*，硬解设备上下文
+    AVBufferRef* hw_device_ctx_{ nullptr };                                         // AVBufferRef*，硬解设备上下文
     bool             is_hardware_{ false };                                         // 硬解是否成功初始化
 };
 

@@ -10,6 +10,8 @@ extern "C"
 #include <libavutil/pixfmt.h>
 }
 
+#include <d3d11.h> 
+
 FFmpegDecoder::FFmpegDecoder() {}
 
 FFmpegDecoder::~FFmpegDecoder()
@@ -133,14 +135,14 @@ bool FFmpegDecoder::OpenFile(const QString& path, bool try_hardware)
 }
 
 // 从 FFmpeg 内部的硬件设备上下文中取出 ID3D11Device*，给渲染器创建交换链用
-void* FFmpegDecoder::GetD3D11Device() const
+ID3D11Device* FFmpegDecoder::GetD3D11Device() const
 {
     if (!hw_device_ctx_) return nullptr;
-    AVHWDeviceContext* dev_ctx = (AVHWDeviceContext*)static_cast<AVBufferRef*>(hw_device_ctx_)->data;
+    AVHWDeviceContext* dev_ctx = (AVHWDeviceContext*)hw_device_ctx_->data;
     if (!dev_ctx || !dev_ctx->hwctx) return nullptr;
     // hwctx 的第一个字段就是 ID3D11Device*
     void** hwctx_ptr = (void**)dev_ctx->hwctx;
-    return hwctx_ptr[0];
+    return (ID3D11Device*)hwctx_ptr[0];
 }
 
 // 释放所有 FFmpeg 资源
