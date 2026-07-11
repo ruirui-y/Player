@@ -165,21 +165,69 @@ void VideoRenderer::ReleaseD3D11()
     qDebug() << "[VideoRenderer] D3D11 渲染资源已释放";
 }
 
-// 利用解码器内部创建的 D3D11 设备创建交换链
-// 同时创建 GPU 管线所需的着色器、中转纹理和 SRV
+// ================================================================
+// 创建交换链
+// ================================================================
 bool VideoRenderer::CreateSwapChain(ID3D11Device* device, int width, int height)
 {
+    // ---- 第一步：清理旧资源 ----
     ReleaseD3D11();
-    if (!device || !hwnd_) return false;
+    if (!device || !hwnd_)
+    {
+        qDebug() << "[VideoRenderer] CreateSwapChain 失败: device 或 hwnd_ 为空";
+        return false;
+    }
 
-    qDebug() << "[VideoRenderer] 利用解码器传入的 ID3D11Device 创建交换链, 尺寸:"
-        << width << "x" << height;
+    qDebug() << "[VideoRenderer] 开始创建渲染管线，分辨率:" << width << "x" << height;
 
+    // 保存设备指针，增加引用计数防止外部意外释放
     d3d11_device_ = device;
-    device->AddRef();                              // 增加引用计数，防止外部意外释放
-    device->GetImmediateContext(&d3d11_ctx_);      // 获取设备上下文用于后续渲染调用
+    device->AddRef();
+    // 获取设备上下文，后续 Map/Unmap/Draw/Present 都靠它
+    device->GetImmediateContext(&d3d11_ctx_);
 
-    // ---- 创建交换链 ----
+    // ---- 第二步：创建交换链（显卡→显示器的桥梁） ----
+    if (!CreateD3D11SwapChain(device, width, height))
+    {
+        qDebug() << "[VideoRenderer] 创建交换链失败";
+        return false;
+    }
+
+    // ---- 第三步：编译 HLSL 着色器（GPU 执行的 NV12→RGB 转换程序） ----
+    if (!InitShaders())
+    {
+        qDebug() << "[VideoRenderer] 着色器初始化失败";
+        return false;
+    }
+
+    // ---- 第四步：创建两块中转纹理（CPU 写→GPU 读的传声筒） ----
+    if (!CreateStagingTextures(width, height))
+    {
+        qDebug() << "[VideoRenderer] 创建中转纹理失败";
+        return false;
+    }
+
+    // ---- 第五步：创建着色器资源视图 SRV（告诉着色器怎么读纹理） ----
+    if (!CreateShaderResourceViews())
+    {
+        qDebug() << "[VideoRenderer] 创建 SRV 失败";
+        return false;
+    }
+
+    qDebug() << "[VideoRenderer] 渲染管线全部就绪，纯 GPU 管线已打通！";
+    return true;
+}
+
+// ================================================================
+// 创建交换链
+// 交换链 = 显卡和显示器之间的"双缓冲画板"
+// 显卡往后台画板画，画完后 Present 交换，显示器看前台画板
+// ================================================================
+bool VideoRenderer::CreateD3D11SwapChain(ID3D11Device* device,
+    int width, int height)
+{
+    // ---- 从 D3D11 设备向上查询 DXGI 工厂 ----
+    // 设备→适配器（显卡）→工厂（管理交换链的对象）
     IDXGIDevice* dxgi_dev = nullptr;
     IDXGIAdapter* adapter = nullptr;
     IDXGIFactory* factory = nullptr;
@@ -188,30 +236,34 @@ bool VideoRenderer::CreateSwapChain(ID3D11Device* device, int width, int height)
     dxgi_dev->GetAdapter(&adapter);
     adapter->GetParent(__uuidof(IDXGIFactory), (void**)&factory);
 
+    // ---- 配置交换链的各项参数 ----
     DXGI_SWAP_CHAIN_DESC scd = { 0 };
-    scd.BufferCount = 2;
-    scd.BufferDesc.Width = width;
-    scd.BufferDesc.Height = height;
-    scd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    scd.BufferDesc.RefreshRate.Numerator = 60;
-    scd.BufferDesc.RefreshRate.Denominator = 1;
-    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    scd.OutputWindow = hwnd_;
-    scd.SampleDesc.Count = 1;
-    scd.SampleDesc.Quality = 0;
-    scd.Windowed = TRUE;
-    scd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
+    scd.BufferCount = 2;                                            // 两个缓冲（双缓冲）
+    scd.BufferDesc.Width = width;                                   // 画面宽度
+    scd.BufferDesc.Height = height;                                 // 画面高度
+    scd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;             // 每个像素 4 字节 RGBA
+    scd.BufferDesc.RefreshRate.Numerator = 60;                      // 刷新率 60Hz
+    scd.BufferDesc.RefreshRate.Denominator = 1;
+    scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;              // 作为渲染目标输出
+    scd.OutputWindow = hwnd_;                                       // 绑定到哪个窗口
+    scd.SampleDesc.Count = 1;                                       // 不启用抗锯齿
+    scd.SampleDesc.Quality = 0;
+    scd.Windowed = TRUE;                                            // 窗口模式（不是全屏独占）
+    scd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;                 // Win10 推荐的现代翻转模式
+
+    // ---- 让 DXGI 工厂创建交换链 ----
     IDXGISwapChain* sc = nullptr;
     HRESULT hr = factory->CreateSwapChain(device, &scd, &sc);
 
+    // ---- 释放临时接口 ----
     dxgi_dev->Release();
     adapter->Release();
     factory->Release();
 
     if (FAILED(hr))
     {
-        qDebug() << "[VideoRenderer] 创建交换链失败，HRESULT:" << hr;
+        qDebug() << "[VideoRenderer] CreateSwapChain 失败，HRESULT:" << hr;
         return false;
     }
 
@@ -219,47 +271,78 @@ bool VideoRenderer::CreateSwapChain(ID3D11Device* device, int width, int height)
     frame_width_ = width;
     frame_height_ = height;
 
-    // ---- 初始化 HLSL 着色器 ----
-    if (!InitShaders())
-    {
-        qDebug() << "[VideoRenderer] 严重错误：Shader 编译或初始化失败！";
-        return false;
-    }
+    qDebug() << "[VideoRenderer] 交换链创建成功";
+    return true;
+}
 
-    // ---- 创建两块独立的中转纹理：Y 平面 + UV 平面 ----
+// ================================================================
+// 创建两个中转纹理
+// 解码器解出来的 NV12 帧在显存里，但我们不能直接读取它
+// 所以需要把 Y 和 UV 分别复制到两张独立的纹理上
+//
+// 为什么用 DYNAMIC + CPU_ACCESS_WRITE：
+//   这些纹理每帧都会从 CPU 写入新数据（memcpy）
+//   DYNAMIC 是专门为"CPU 频繁写入"优化的纹理类型
+// ================================================================
+bool VideoRenderer::CreateStagingTextures(int width, int height)
+{
     D3D11_TEXTURE2D_DESC tex_desc = {};
-    tex_desc.MipLevels = 1;
-    tex_desc.ArraySize = 1;
-    tex_desc.SampleDesc.Count = 1;
-    tex_desc.Usage = D3D11_USAGE_DYNAMIC;              // CPU 写入 + GPU 读取
-    tex_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
-    // Y 平面纹理：单通道 R8，尺寸跟视频一样
+    tex_desc.MipLevels = 1;                                     // 不使用 Mipmap
+    tex_desc.ArraySize = 1;                                     // 单张纹理，不是纹理数组
+    tex_desc.SampleDesc.Count = 1;                              // 不抗锯齿
+    tex_desc.Usage = D3D11_USAGE_DYNAMIC;                       // CPU 写入 + GPU 读取
+    tex_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;           // 允许 CPU 写入
+    tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;            // 能被着色器读取
+
+    // ---- Y 平面纹理 ----
+    // Y 平面是单通道（亮度），每个像素 1 个字节
+    // 尺寸跟视频分辨率一样
     tex_desc.Width = width;
     tex_desc.Height = height;
-    tex_desc.Format = DXGI_FORMAT_R8_UNORM;
+    tex_desc.Format = DXGI_FORMAT_R8_UNORM;                     // 单通道，值范围 0~255
     if (FAILED(d3d11_device_->CreateTexture2D(&tex_desc, nullptr, &staging_y_texture_)))
     {
         qDebug() << "[VideoRenderer] 创建 Y 平面纹理失败";
         return false;
     }
 
-    // UV 平面纹理：双通道 R8G8，NV12 的 UV 平面宽高各为视频的一半
+    // ---- UV 平面纹理 ----
+    // NV12 的 UV 是交织存储的，每个像素对占 2 个字节（U 和 V 各一个）
+    // UV 平面的尺寸是视频宽高各一半
     tex_desc.Width = width / 2;
     tex_desc.Height = height / 2;
-    tex_desc.Format = DXGI_FORMAT_R8G8_UNORM;
+    tex_desc.Format = DXGI_FORMAT_R8G8_UNORM;                   // 双通道（U 和 V）
     if (FAILED(d3d11_device_->CreateTexture2D(&tex_desc, nullptr, &staging_uv_texture_)))
     {
         qDebug() << "[VideoRenderer] 创建 UV 平面纹理失败";
         return false;
     }
 
-    // ---- 创建着色器资源视图 SRV ----
-    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
-    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srv_desc.Texture2D.MipLevels = 1;
+    qDebug() << "[VideoRenderer] 中转纹理创建成功: Y=" << width << "x" << height
+        << " UV=" << width / 2 << "x" << height / 2;
+    return true;
+}
 
+// ================================================================
+// 创建着色器资源视图 SRV
+//
+// 纹理建好了，但着色器不能直接用纹理
+// 需要一个"视图"作为中间层，告诉着色器：
+//   - 这个纹理是什么格式（R8 还是 R8G8）
+//   - 是 2D 纹理还是纹理数组
+//   - 读哪一层 Mipmap
+// 这个中间层就是 SRV（Shader Resource View）
+// ================================================================
+bool VideoRenderer::CreateShaderResourceViews()
+{
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;         // 2D 纹理
+    srv_desc.Texture2D.MipLevels = 1;                               // 只用第 0 层 Mipmap
+
+    // ---- Y 平面的 SRV ----
+    // Y 平面是单通道 R8，所以 SRV 格式也是 R8_UNORM
     srv_desc.Format = DXGI_FORMAT_R8_UNORM;
     if (FAILED(d3d11_device_->CreateShaderResourceView(
         staging_y_texture_, &srv_desc, &srv_y_)))
@@ -268,6 +351,8 @@ bool VideoRenderer::CreateSwapChain(ID3D11Device* device, int width, int height)
         return false;
     }
 
+    // ---- UV 平面的 SRV ----
+    // UV 平面是双通道 R8G8，所以 SRV 格式也是 R8G8_UNORM
     srv_desc.Format = DXGI_FORMAT_R8G8_UNORM;
     if (FAILED(d3d11_device_->CreateShaderResourceView(
         staging_uv_texture_, &srv_desc, &srv_uv_)))
@@ -276,7 +361,7 @@ bool VideoRenderer::CreateSwapChain(ID3D11Device* device, int width, int height)
         return false;
     }
 
-    qDebug() << "[VideoRenderer] 交换链、着色器、双平面纹理全部就绪，纯 GPU 管线已打通！";
+    qDebug() << "[VideoRenderer] 着色器资源视图创建成功";
     return true;
 }
 

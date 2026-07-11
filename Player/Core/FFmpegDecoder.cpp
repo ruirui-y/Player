@@ -234,9 +234,8 @@ bool FFmpegDecoder::Seek(qint64 pos_ms)
 {
     if (!fmt_ctx_) return false;
     qDebug() << "[FFmpegDecoder] 执行 Seek，目标时间:" << pos_ms << "ms";
-    AVFormatContext* fmt = static_cast<AVFormatContext*>(fmt_ctx_);
     int64_t ts = pos_ms * AV_TIME_BASE / 1000;
-    int ret = av_seek_frame(fmt, -1, ts, AVSEEK_FLAG_BACKWARD);
+    int ret = av_seek_frame(fmt_ctx_, -1, ts, AVSEEK_FLAG_BACKWARD);
     if (ret >= 0) FlushBuffers();
     return ret >= 0;
 }
@@ -245,7 +244,7 @@ bool FFmpegDecoder::Seek(qint64 pos_ms)
 void FFmpegDecoder::FlushBuffers()
 {
     if (codec_ctx_)
-        avcodec_flush_buffers(static_cast<AVCodecContext*>(codec_ctx_));
+        avcodec_flush_buffers(codec_ctx_);
 }
 
 // ---- 以下为简单的 getter 方法 ----
@@ -258,12 +257,12 @@ qint64 FFmpegDecoder::GetDuration() const
 
 int FFmpegDecoder::GetWidth() const
 {
-    return codec_ctx_ ? static_cast<AVCodecContext*>(codec_ctx_)->width : 0;
+    return codec_ctx_ ? codec_ctx_->width : 0;
 }
 
 int FFmpegDecoder::GetHeight() const
 {
-    return codec_ctx_ ? static_cast<AVCodecContext*>(codec_ctx_)->height : 0;
+    return codec_ctx_ ? codec_ctx_->height : 0;
 }
 
 AVRational FFmpegDecoder::GetVideoTimeBase() const
@@ -274,12 +273,12 @@ AVRational FFmpegDecoder::GetVideoTimeBase() const
 
 AVFormatContext* FFmpegDecoder::GetFormatContext() const
 {
-    return static_cast<AVFormatContext*>(fmt_ctx_);
+    return fmt_ctx_;
 }
 
 AVCodecContext* FFmpegDecoder::GetCodecContext() const
 {
-    return static_cast<AVCodecContext*>(codec_ctx_);
+    return codec_ctx_;
 }
 
 bool FFmpegDecoder::IsHardwareDecoding() const
@@ -291,7 +290,7 @@ bool FFmpegDecoder::IsHardwareDecoding() const
 double FFmpegDecoder::GetFrameRate() const
 {
     if (!fmt_ctx_ || video_stream_idx_ < 0) return 30.0;
-    AVStream* stream = static_cast<AVFormatContext*>(fmt_ctx_)->streams[video_stream_idx_];
+    AVStream* stream = fmt_ctx_->streams[video_stream_idx_];
     // 优先使用 avg_frame_rate，然后 r_frame_rate，最后 codecpar 里的 framerate
     if (stream->avg_frame_rate.den > 0 && stream->avg_frame_rate.num > 0)
         return av_q2d(stream->avg_frame_rate);

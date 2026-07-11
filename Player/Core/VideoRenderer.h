@@ -32,6 +32,9 @@ signals:
     void SigFrameReady(const QImage& image);                                    // 软解回退时发射
 
 private:
+    bool CreateD3D11SwapChain(ID3D11Device* device, int width, int height);     // 创建交换链
+    bool CreateStagingTextures(int width, int height);                          // 创建中转纹理
+    bool CreateShaderResourceViews();                                           // 创建着色器资源视图
     void RenderHardware(AVFrame* frame);                                        // GPU 着色器渲染
     void RenderSoftware(AVFrame* frame);                                        // CPU sws_scale 软解渲染
 

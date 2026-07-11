@@ -46,7 +46,7 @@ int main(int argc, char* argv[])
         });
 
     // ---- 打开文件并播放 ----
-    QString videoPath = "H:/YJJ/Project/Player/Player/Movie/hevc_8k60P_bilibili_1.mp4";
+    QString videoPath = "H:/YJJ/Project/Player/Player/Movie/001.mp4";
     // QString videoPath = "H:/YJJ/Project/Player/Player/Movie/huanyou.mp4";  // 另一个测试视频
     if (player.OpenFile(videoPath))
     {

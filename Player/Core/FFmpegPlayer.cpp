@@ -61,7 +61,7 @@ bool FFmpegPlayer::OpenFile(const QString& path)
     // ---- 第二步：如果硬解成功，从解码器取出 D3D11 设备创建交换链 ----
     if (decoder_->IsHardwareDecoding())
     {
-        ID3D11Device* device = (ID3D11Device*)decoder_->GetD3D11Device();
+        ID3D11Device* device = decoder_->GetD3D11Device();
         if (device)
         {
             renderer_->CreateSwapChain(device, w, h);
