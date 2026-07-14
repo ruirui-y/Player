@@ -64,7 +64,10 @@ bool FFmpegPlayer::OpenFile(const QString& path)
         ID3D11Device* device = decoder_->GetD3D11Device();
         if (device)
         {
-            renderer_->CreateSwapChain(device, w, h);
+            if (!renderer_->CreateSwapChain(device, w, h))
+            {
+                qDebug() << "[FFmpegPlayer] 创建交换链失败，将回退到 CPU 渲染";
+            }
         }
     }
 

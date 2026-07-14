@@ -7,6 +7,7 @@ extern "C"
 {
 #include <libavutil/pixfmt.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/hwcontext_d3d11va.h>    // AVD3D11VAFrame 定义在此
 #include <libswscale/swscale.h>
 }
 
@@ -52,21 +53,27 @@ VideoRenderer::VideoRenderer(QObject* parent)
 
 VideoRenderer::~VideoRenderer()
 {
-    // 释放着色器相关资源
     if (vertex_shader_) { vertex_shader_->Release();        vertex_shader_ = nullptr; }
     if (pixel_shader_) { pixel_shader_->Release();         pixel_shader_ = nullptr; }
     if (sampler_linear_) { sampler_linear_->Release();       sampler_linear_ = nullptr; }
+    if (test_nv12_srv_) { test_nv12_srv_->Release();        test_nv12_srv_ = nullptr; }
+    if (test_nv12_texture_) { test_nv12_texture_->Release();  test_nv12_texture_ = nullptr; }
+    if (nv12_srv_uv_) { nv12_srv_uv_->Release();            nv12_srv_uv_ = nullptr; }
+    if (nv12_srv_y_) { nv12_srv_y_->Release();             nv12_srv_y_ = nullptr; }
+    if (nv12_texture_) { nv12_texture_->Release();          nv12_texture_ = nullptr; }
     if (srv_uv_) { srv_uv_->Release();               srv_uv_ = nullptr; }
     if (srv_y_) { srv_y_->Release();                srv_y_ = nullptr; }
     if (staging_uv_texture_) { staging_uv_texture_->Release();   staging_uv_texture_ = nullptr; }
     if (staging_y_texture_) { staging_y_texture_->Release();    staging_y_texture_ = nullptr; }
-
+    if (d3d11_device3_) { d3d11_device3_->Release(); d3d11_device3_ = nullptr; }
     ReleaseD3D11();
 }
 
 void VideoRenderer::SetHwnd(HWND hwnd) { hwnd_ = hwnd; }
 ID3D11Device* VideoRenderer::GetD3D11Device() const { return d3d11_device_; }
 ID3D11DeviceContext* VideoRenderer::GetD3D11DeviceContext() const { return d3d11_ctx_; }
+void VideoRenderer::SetUploadStrategy(UploadStrategy s) { active_strategy_ = s; }
+VideoRenderer::UploadStrategy VideoRenderer::GetUploadStrategy() const { return active_strategy_; }
 
 // 独立创建 D3D11 设备 + 交换链（用于纯软解模式下创建独立的渲染环境）
 ID3D11Device* VideoRenderer::InitD3D11(int width, int height)
@@ -82,7 +89,7 @@ ID3D11Device* VideoRenderer::InitD3D11(int width, int height)
     qDebug() << "[VideoRenderer] 开始独立初始化 D3D11 设备与交换链，分辨率:"
         << width << "x" << height;
 
-    UINT flags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
+    UINT flags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
     D3D_FEATURE_LEVEL levels[] =
     {
         D3D_FEATURE_LEVEL_11_1,
@@ -155,6 +162,11 @@ ID3D11Device* VideoRenderer::InitD3D11(int width, int height)
 void VideoRenderer::ReleaseD3D11()
 {
     // 按依赖顺序反向释放：SRV → 纹理 → 交换链 → 上下文 → 设备
+    if (nv12_srv_uv_) { nv12_srv_uv_->Release();            nv12_srv_uv_ = nullptr; }
+    if (nv12_srv_y_) { nv12_srv_y_->Release();             nv12_srv_y_ = nullptr; }
+    if (nv12_texture_) { nv12_texture_->Release();          nv12_texture_ = nullptr; }
+    if (test_nv12_srv_) { test_nv12_srv_->Release();        test_nv12_srv_ = nullptr; }
+    if (test_nv12_texture_) { test_nv12_texture_->Release();  test_nv12_texture_ = nullptr; }
     if (srv_uv_) { srv_uv_->Release();               srv_uv_ = nullptr; }
     if (srv_y_) { srv_y_->Release();                srv_y_ = nullptr; }
     if (staging_uv_texture_) { staging_uv_texture_->Release();   staging_uv_texture_ = nullptr; }
@@ -163,6 +175,7 @@ void VideoRenderer::ReleaseD3D11()
     if (d3d11_ctx_) { d3d11_ctx_->Release();            d3d11_ctx_ = nullptr; }
     if (rtv_) { rtv_->Release(); rtv_ = nullptr; }
     if (d3d11_device_) { d3d11_device_->Release();         d3d11_device_ = nullptr; }
+    if (d3d11_device3_) { d3d11_device3_->Release(); d3d11_device3_ = nullptr; }
     qDebug() << "[VideoRenderer] D3D11 渲染资源已释放";
 }
 
@@ -186,6 +199,10 @@ bool VideoRenderer::CreateSwapChain(ID3D11Device* device, int width, int height)
     device->AddRef();
     // 获取设备上下文，后续 Map/Unmap/Draw/Present 都靠它
     device->GetImmediateContext(&d3d11_ctx_);
+
+    // 查询 ID3D11Device3（不是 Device1）
+    HRESULT hr = d3d11_device_->QueryInterface(
+        __uuidof(ID3D11Device3), (void**)&d3d11_device3_);
 
     // ---- 第二步：创建交换链（显卡→显示器的桥梁） ----
     if (!CreateD3D11SwapChain(device, width, height))
@@ -303,11 +320,9 @@ bool VideoRenderer::CreateStagingTextures(int width, int height)
     tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;            // 能被着色器读取
 
     // ---- Y 平面纹理 ----
-    // Y 平面是单通道（亮度），每个像素 1 个字节
-    // 尺寸跟视频分辨率一样
     tex_desc.Width = width;
     tex_desc.Height = height;
-    tex_desc.Format = DXGI_FORMAT_R8_UNORM;                     // 单通道，值范围 0~255
+    tex_desc.Format = DXGI_FORMAT_R8_UNORM;
     if (FAILED(d3d11_device_->CreateTexture2D(&tex_desc, nullptr, &staging_y_texture_)))
     {
         qDebug() << "[VideoRenderer] 创建 Y 平面纹理失败";
@@ -315,11 +330,9 @@ bool VideoRenderer::CreateStagingTextures(int width, int height)
     }
 
     // ---- UV 平面纹理 ----
-    // NV12 的 UV 是交织存储的，每个像素对占 2 个字节（U 和 V 各一个）
-    // UV 平面的尺寸是视频宽高各一半
     tex_desc.Width = width / 2;
     tex_desc.Height = height / 2;
-    tex_desc.Format = DXGI_FORMAT_R8G8_UNORM;                   // 双通道（U 和 V）
+    tex_desc.Format = DXGI_FORMAT_R8G8_UNORM;
     if (FAILED(d3d11_device_->CreateTexture2D(&tex_desc, nullptr, &staging_uv_texture_)))
     {
         qDebug() << "[VideoRenderer] 创建 UV 平面纹理失败";
@@ -345,11 +358,10 @@ bool VideoRenderer::CreateShaderResourceViews()
 {
     D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
 
-    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;         // 2D 纹理
-    srv_desc.Texture2D.MipLevels = 1;                               // 只用第 0 层 Mipmap
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels = 1;
 
     // ---- Y 平面的 SRV ----
-    // Y 平面是单通道 R8，所以 SRV 格式也是 R8_UNORM
     srv_desc.Format = DXGI_FORMAT_R8_UNORM;
     if (FAILED(d3d11_device_->CreateShaderResourceView(
         staging_y_texture_, &srv_desc, &srv_y_)))
@@ -359,7 +371,6 @@ bool VideoRenderer::CreateShaderResourceViews()
     }
 
     // ---- UV 平面的 SRV ----
-    // UV 平面是双通道 R8G8，所以 SRV 格式也是 R8G8_UNORM
     srv_desc.Format = DXGI_FORMAT_R8G8_UNORM;
     if (FAILED(d3d11_device_->CreateShaderResourceView(
         staging_uv_texture_, &srv_desc, &srv_uv_)))
@@ -379,8 +390,8 @@ void VideoRenderer::Render(AVFrame* frame)
 
     int fmt = frame->format;
 
-    // 路径一：纯 GPU 渲染（D3D11 格式 + 着色器 + SRV 全部就绪）
-    if (fmt == AV_PIX_FMT_D3D11 && swapchain_ && pixel_shader_ && srv_y_)
+    // 路径一：硬解帧 → 走 GPU 硬件渲染（通过 UploadStrategy 切换上传方案）
+    if (fmt == AV_PIX_FMT_D3D11 && swapchain_ && pixel_shader_)
     {
         RenderHardware(frame);
         return;
@@ -430,29 +441,33 @@ void VideoRenderer::Render(AVFrame* frame)
     RenderSoftware(frame);
 }
 
-// GPU 渲染：下载 YUV → 上传 Y/UV 到两个独立纹理 → 着色器 NV12→RGB → Present
-void VideoRenderer::RenderHardware(AVFrame* frame)
+// ================================================================
+// 策略 A：GPU→CPU 下载 → CPU 拆 NV12 → memcpy 上传两张 R8/R8G8 纹理
+// ================================================================
+VideoRenderer::UploadResult VideoRenderer::UploadViaCPUTransfer(AVFrame* frame)
 {
-    if (!d3d11_ctx_ || !swapchain_ || !srv_y_ || !srv_uv_ || !rtv_) return;
+    UploadResult result;
+    result.strategy_name = "A: GPU→CPU下载→CPU拆NV12→memcpy上传";
 
-    // ---- 第一步：绑定渲染目标（成员变量，每帧复用） ----
-    d3d11_ctx_->OMSetRenderTargets(1, &rtv_, nullptr);
-    D3D11_VIEWPORT vp = { 0.0f, 0.0f, (float)frame_width_, (float)frame_height_, 0.0f, 1.0f };
-    d3d11_ctx_->RSSetViewports(1, &vp);
+    auto t0 = std::chrono::steady_clock::now();
 
-    // ---- 第二步：将帧从 GPU 显存下载到 CPU 内存 ----
+    // ---- 第①步：GPU→CPU 下载 ----
     AVFrame* sw_frame = av_frame_alloc();
-    if (!sw_frame) return;
+    if (!sw_frame)
+    {
+        result.detail = "av_frame_alloc 失败";
+        return result;
+    }
 
     int ret = av_hwframe_transfer_data(sw_frame, frame, 0);
     if (ret != 0 || !sw_frame->data[0] || !sw_frame->data[1])
     {
-        qDebug() << "RenderHardware: av_hwframe_transfer_data failed" << ret;
+        result.detail = QString("av_hwframe_transfer_data 失败, ret=%1").arg(ret);
         av_frame_free(&sw_frame);
-        return;
+        return result;
     }
 
-    // ---- 第三步：Y 平面 CPU→GPU 逐行上传 ----
+    // ---- 第②步：Y 平面逐行上传 ----
     D3D11_MAPPED_SUBRESOURCE mapped;
     if (SUCCEEDED(d3d11_ctx_->Map(
         staging_y_texture_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
@@ -466,8 +481,14 @@ void VideoRenderer::RenderHardware(AVFrame* frame)
         }
         d3d11_ctx_->Unmap(staging_y_texture_, 0);
     }
+    else
+    {
+        result.detail = "Y 平面 Map 失败";
+        av_frame_free(&sw_frame);
+        return result;
+    }
 
-    // ---- 第四步：UV 平面 CPU→GPU 逐行上传 ----
+    // ---- 第③步：UV 平面逐行上传 ----
     if (SUCCEEDED(d3d11_ctx_->Map(
         staging_uv_texture_, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
     {
@@ -481,26 +502,300 @@ void VideoRenderer::RenderHardware(AVFrame* frame)
         }
         d3d11_ctx_->Unmap(staging_uv_texture_, 0);
     }
+    else
+    {
+        result.detail = "UV 平面 Map 失败";
+        av_frame_free(&sw_frame);
+        return result;
+    }
 
     av_frame_free(&sw_frame);
 
-    // ---- 第五步：装配渲染管线并执行 ----
+    auto t1 = std::chrono::steady_clock::now();
+    result.success = true;
+    result.detail = "✅ 下载+上传成功";
+    result.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    return result;
+}
+
+// ================================================================
+// 策略 C：CopyResource 到自建 NV12 纹理 → 创建 SRV
+// 验证"自己创建一个带 SHADER_RESOURCE 的 NV12 纹理，拷贝数据，能否创建 SRV"
+// ================================================================
+VideoRenderer::UploadResult VideoRenderer::UploadViaCopiedNV12Texture(AVFrame* frame)
+{
+    UploadResult result;
+    result.strategy_name = "C: CopyResource 到自建 NV12 纹理 → 创建 SRV";
+
+    // ---- 直接取纹理指针 ----
+    ID3D11Texture2D* src_texture = (ID3D11Texture2D*)frame->data[0];
+    if (!src_texture)
+    {
+        result.detail = "frame->data[0] 为空";
+        return result;
+    }
+
+    D3D11_TEXTURE2D_DESC src_desc;
+    src_texture->GetDesc(&src_desc);
+
+    // ---- 创建自己的 NV12 纹理（带 SHADER_RESOURCE） ----
+    if (!test_nv12_texture_)
+    {
+        D3D11_TEXTURE2D_DESC my_desc = {};
+        my_desc.Width = src_desc.Width;
+        my_desc.Height = src_desc.Height;
+        my_desc.Format = DXGI_FORMAT_NV12;
+        my_desc.MipLevels = 1;
+        my_desc.ArraySize = 1;
+        my_desc.SampleDesc.Count = 1;
+        my_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        my_desc.Usage = D3D11_USAGE_DEFAULT;
+        my_desc.MiscFlags = 0;
+        my_desc.CPUAccessFlags = 0;
+
+        HRESULT hr = d3d11_device_->CreateTexture2D(&my_desc, nullptr, &test_nv12_texture_);
+        if (FAILED(hr))
+        {
+            result.detail = QString("创建 NV12 纹理失败, HR=0x%1").arg(hr, 0, 16);
+            return result;
+        }
+        result.detail = "创建 NV12 纹理 ✅ | ";
+    }
+    else
+    {
+        result.detail = "复用已有 NV12 纹理 | ";
+    }
+
+    // ---- CopyResource：GPU 内部拷贝 ----
+    d3d11_ctx_->CopyResource(test_nv12_texture_, src_texture);
+    result.detail += "CopyResource 完成 | ";
+
+    // ---- 尝试创建 SRV ----
+    if (test_nv12_srv_)
+    {
+        test_nv12_srv_->Release();
+        test_nv12_srv_ = nullptr;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+    srv_desc.Format = DXGI_FORMAT_NV12;
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels = 1;
+
+    HRESULT hr = d3d11_device_->CreateShaderResourceView(
+        test_nv12_texture_, &srv_desc, &test_nv12_srv_);
+    if (FAILED(hr))
+    {
+        result.detail += QString("创建 SRV 失败, HR=0x%1").arg(hr, 0, 16);
+        return result;
+    }
+
+    result.success = true;
+    result.detail += "✅ 创建 SRV 成功！";
+    return result;
+}
+
+// ================================================================
+// 策略 D：CopySubresourceRegion + PlaneSlice SRV
+// GPU 内部只拷贝一帧 → 两个 SRV 分别指向 Y/UV plane
+// 全程不经过 CPU
+// ================================================================
+VideoRenderer::UploadResult VideoRenderer::UploadViaCopiedNV12Subresource(AVFrame* frame)
+{
+    UploadResult result;
+    result.strategy_name = "D: CopySubresourceRegion → PlaneSlice SRV";
+
+    auto t0 = std::chrono::steady_clock::now();
+
+    // ---- 第①步：从 frame 取解码器纹理和帧索引 ----
+    ID3D11Texture2D* decoder_texture = (ID3D11Texture2D*)frame->data[0];
+    int subresource_index = (int)(intptr_t)frame->data[1];
+    if (!decoder_texture)
+    {
+        result.detail = "frame->data[0] 为空";
+        return result;
+    }
+
+    D3D11_TEXTURE2D_DESC dec_desc;
+    decoder_texture->GetDesc(&dec_desc);
+
+    int w = dec_desc.Width;
+    int h = dec_desc.Height;
+
+    // ---- 第②步：首次运行或分辨率变化时，创建自己的 NV12 纹理和 SRV ----
+    if (!nv12_texture_ || w != nv12_width_ || h != nv12_height_)
+    {
+        // 清理旧资源
+        if (nv12_srv_uv_) { nv12_srv_uv_->Release();  nv12_srv_uv_ = nullptr; }
+        if (nv12_srv_y_) { nv12_srv_y_->Release();   nv12_srv_y_ = nullptr; }
+        if (nv12_texture_) { nv12_texture_->Release(); nv12_texture_ = nullptr; }
+
+        // 创建自己的 NV12 纹理（ArraySize=1，带 SHADER_RESOURCE）
+        D3D11_TEXTURE2D_DESC my_desc = {};
+        my_desc.Width = w;
+        my_desc.Height = h;
+        my_desc.Format = DXGI_FORMAT_NV12;
+        my_desc.MipLevels = 1;
+        my_desc.ArraySize = 1;
+        my_desc.SampleDesc.Count = 1;
+        my_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        my_desc.Usage = D3D11_USAGE_DEFAULT;
+        my_desc.MiscFlags = 0;
+        my_desc.CPUAccessFlags = 0;
+
+        HRESULT hr = d3d11_device_->CreateTexture2D(&my_desc, nullptr, &nv12_texture_);
+        if (FAILED(hr))
+        {
+            result.detail = QString("创建 NV12 纹理失败, HR=0x%1").arg(hr, 0, 16);
+            return result;
+        }
+
+        // ---- 为 NV12 纹理创建两个 SRV（D3D 11.3 PlaneSlice 方案） ----
+        D3D11_SHADER_RESOURCE_VIEW_DESC1 srv_desc = {};
+        srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+        srv_desc.Texture2DArray.MipLevels = 1;
+        srv_desc.Texture2DArray.FirstArraySlice = 0;
+        srv_desc.Texture2DArray.ArraySize = 1;
+
+        // Y 平面：PlaneSlice=0，格式 R8_UNORM
+        srv_desc.Format = DXGI_FORMAT_R8_UNORM;
+        srv_desc.Texture2DArray.PlaneSlice = 0;
+
+        ID3D11ShaderResourceView1* tmp_srv_y = nullptr;                  // ← 用 1 版本指针接
+        hr = d3d11_device3_->CreateShaderResourceView1(
+            nv12_texture_, &srv_desc, &tmp_srv_y);
+        if (FAILED(hr))
+        {
+            result.detail = QString("创建 Y Plane SRV 失败, HR=0x%1").arg(hr, 0, 16);
+            return result;
+        }
+        nv12_srv_y_ = tmp_srv_y;                                         // ← 赋值给老版本指针
+
+        // UV 平面：PlaneSlice=1，格式 R8G8_UNORM
+        srv_desc.Format = DXGI_FORMAT_R8G8_UNORM;
+        srv_desc.Texture2DArray.PlaneSlice = 1;
+
+        ID3D11ShaderResourceView1* tmp_srv_uv = nullptr;
+        hr = d3d11_device3_->CreateShaderResourceView1(
+            nv12_texture_, &srv_desc, &tmp_srv_uv);
+        if (FAILED(hr))
+        {
+            result.detail = QString("创建 UV Plane SRV 失败, HR=0x%1").arg(hr, 0, 16);
+            if (nv12_srv_y_) { nv12_srv_y_->Release(); nv12_srv_y_ = nullptr; }
+            return result;
+        }
+        nv12_srv_uv_ = tmp_srv_uv;
+
+        nv12_width_ = w;
+        nv12_height_ = h;
+
+        result.detail = "创建 NV12 纹理 + PlaneSlice SRV ✅ | ";
+    }
+    else
+    {
+        result.detail = "复用 NV12 纹理 + SRV | ";
+    }
+
+    // ---- 第③步：CopySubresourceRegion — 只拷贝当前帧 ----
+    // 源 subresource = 帧索引（因为 MipLevels=1，subresource = index * MipLevels）
+    // 目标 subresource = 0（ArraySize=1 的单独纹理）
+    D3D11_BOX src_box;
+    src_box.left = 0;
+    src_box.top = 0;
+    src_box.front = 0;
+    src_box.right = w;
+    src_box.bottom = h;
+    src_box.back = 1;
+
+    d3d11_ctx_->CopySubresourceRegion(
+        nv12_texture_,                              // 目标纹理
+        0,                                          // 目标 subresource
+        0, 0, 0,                                    // 目标偏移 (x, y, z)
+        decoder_texture,                            // 源纹理
+        subresource_index,                          // 源 subresource（= 帧在数组中的索引）
+        &src_box);
+
+    auto t1 = std::chrono::steady_clock::now();
+
+    result.success = true;
+    result.detail += QString("CopySubresourceRegion ✅ (帧索引=%1)").arg(subresource_index);
+    result.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    return result;
+}
+
+// ================================================================
+// 固定渲染管线：不包含上传逻辑，只做 GPU 着色器渲染
+// 参数指定用哪两个 SRV（策略 A 用 staging SRV，策略 D 用 NV12 PlaneSlice SRV）
+// ================================================================
+void VideoRenderer::ExecuteRenderPipeline(
+    ID3D11ShaderResourceView* srv_y,
+    ID3D11ShaderResourceView* srv_uv)
+{
+    if (!d3d11_ctx_ || !swapchain_ || !rtv_ || !srv_y || !srv_uv) return;
+
+    // ---- 绑定渲染目标 ----
+    d3d11_ctx_->OMSetRenderTargets(1, &rtv_, nullptr);
+    D3D11_VIEWPORT vp = { 0.0f, 0.0f, (float)frame_width_, (float)frame_height_, 0.0f, 1.0f };
+    d3d11_ctx_->RSSetViewports(1, &vp);
+
+    // ---- 装配着色器 ----
     d3d11_ctx_->IASetInputLayout(nullptr);
     d3d11_ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     d3d11_ctx_->VSSetShader(vertex_shader_, nullptr, 0);
     d3d11_ctx_->PSSetShader(pixel_shader_, nullptr, 0);
 
-    ID3D11ShaderResourceView* srvs[] = { srv_y_, srv_uv_ };
+    ID3D11ShaderResourceView* srvs[] = { srv_y, srv_uv };
     d3d11_ctx_->PSSetShaderResources(0, 2, srvs);
     d3d11_ctx_->PSSetSamplers(0, 1, &sampler_linear_);
 
+    // ---- Draw + Present ----
     d3d11_ctx_->Draw(3, 0);
     swapchain_->Present(1, 0);
 
-    // ---- 第六步：清理本帧绑定的 SRV（不影响下一帧） ----
+    // ---- 清理 ----
     ID3D11ShaderResourceView* null_srvs[] = { nullptr, nullptr };
     d3d11_ctx_->PSSetShaderResources(0, 2, null_srvs);
+}
+
+// ================================================================
+// RenderHardware：数据上传 + 固定渲染
+// 上传策略由 active_strategy_ 切换
+// ================================================================
+void VideoRenderer::RenderHardware(AVFrame* frame)
+{
+    if (!d3d11_ctx_ || !swapchain_ || !rtv_) return;
+
+    // ---- 第一步：根据当前策略执行数据上传 ----
+    UploadResult result;
+    ID3D11ShaderResourceView* srv_y = nullptr;
+    ID3D11ShaderResourceView* srv_uv = nullptr;
+
+    switch (active_strategy_)
+    {
+    case UploadStrategy::CPU_TRANSFER:
+        result = UploadViaCPUTransfer(frame);
+        srv_y = srv_y_;        // 使用 staging 纹理的 SRV
+        srv_uv = srv_uv_;
+        break;
+
+    case UploadStrategy::COPIED_NV12_PLANE_SLICE:
+        result = UploadViaCopiedNV12Subresource(frame);
+        srv_y = nv12_srv_y_;   // 使用 NV12 PlaneSlice SRV
+        srv_uv = nv12_srv_uv_;
+        break;
+    }
+
+    // ---- 打印上传结果日志 ----
+    //qDebug() << "[UploadStrategy]" << result.strategy_name
+    //    << (result.success ? "成功" : "失败")
+    //    << "|" << result.detail
+    //    << (result.success ? QString("| 耗时 %1ms").arg(result.elapsed_ms, 0, 'f', 1) : "");
+
+    //if (!result.success) return;
+
+    // ---- 第二步：执行固定渲染管线 ----
+    ExecuteRenderPipeline(srv_y, srv_uv);
 }
 
 // CPU 软解渲染：sws_scale 做 YUV→RGB 转换 → 发射 QImage 到主线程

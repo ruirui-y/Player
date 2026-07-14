@@ -79,7 +79,9 @@ bool FFmpegDecoder::OpenFile(const QString& path, bool try_hardware)
         {
             AVBufferRef* hw_ref = nullptr;
             // 让 FFmpeg 自己创建 D3D11 设备，不需要外部传入
-            ret = av_hwdevice_ctx_create(&hw_ref, hw_type, nullptr, nullptr, 0);
+            AVDictionary* dict = nullptr;
+            av_dict_set(&dict, "debug", "1", 0);                            // 开启 D3D11 debug layer
+            ret = av_hwdevice_ctx_create(&hw_ref, hw_type, nullptr, dict, 0);
             if (ret >= 0 && hw_ref)
             {
                 qDebug() << "[FFmpegDecoder] D3D11VA 硬件设备上下文创建成功";
@@ -109,6 +111,7 @@ bool FFmpegDecoder::OpenFile(const QString& path, bool try_hardware)
             {
                 qDebug() << "[FFmpegDecoder] D3D11VA 硬件设备上下文创建失败, ret =" << ret;
             }
+            av_dict_free(&dict);
         }
     }
 
