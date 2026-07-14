@@ -46,7 +46,13 @@
     <ClCompile Include="Core\FFmpegDecoder.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Core\VideoRenderer.cpp">
+    <ClCompile Include="Core\D3D11Pipeline.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Nv12GpuUploader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\SoftwareRenderer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Core\FFmpegPlayer.cpp">
@@ -57,7 +63,7 @@
     <QtMoc Include="TCP\TcpServer.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="Core\VideoRenderer.h">
+    <QtMoc Include="Core\SoftwareRenderer.h">
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="Core\FFmpegPlayer.h">
@@ -68,5 +74,19 @@
     <ClInclude Include="Core\FFmpegDecoder.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Core\D3D11Pipeline.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Nv12GpuUploader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Notes\8k30帧.md" />
+    <None Include="Notes\播放器完整流程拆解.md" />
+    <None Include="Notes\补齐基础知识-自学.md" />
+    <None Include="Notes\从 CPU 到 GPU 的演进总结.md" />
+    <None Include="Notes\大纲.md" />
+    <None Include="Notes\软解码.md" />
   </ItemGroup>
 </Project>

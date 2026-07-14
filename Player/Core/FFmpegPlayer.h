@@ -7,7 +7,9 @@
 #include <thread>
 
 class FFmpegDecoder;        // 解码层（前向声明）
-class VideoRenderer;        // 渲染层（前向声明）
+class D3D11Pipeline;        // GPU 渲染管线（前向声明）
+class Nv12GpuUploader;      // GPU 帧上传器（前向声明）
+class SoftwareRenderer;     // CPU 软解渲染器（前向声明）
 
 struct AVFrame;
 
@@ -42,8 +44,10 @@ signals:
 private:
     void DecodeLoop();                                                                  // 解码线程主循环
 
-    FFmpegDecoder* decoder_{ nullptr };                                                 // 解码层
-    VideoRenderer* renderer_{ nullptr };                                                // 渲染层
+    FFmpegDecoder*      decoder_{ nullptr };                                            // 解码层
+    D3D11Pipeline*      d3d11_pipeline_{ nullptr };                                     // GPU 渲染管线
+    Nv12GpuUploader*    nv12_uploader_{ nullptr };                                      // GPU 帧上传器
+    SoftwareRenderer*   sw_renderer_{ nullptr };                                        // CPU 软解渲染器
 
     HWND hwnd_{ nullptr };                                                              // 窗口句柄
 
