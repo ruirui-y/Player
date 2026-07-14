@@ -24,7 +24,7 @@ public:
     ID3D11Device* GetD3D11Device() const;                                           // 返回解码器内部的 ID3D11Device*
     void Close();                                                                   // 关闭文件，释放所有 FFmpeg 资源
 
-    int  ReadFrame(AVFrame* frame, AVPacket* audio_pkt = nullptr);                  // 返回 0=视频帧, 1=音频包, <0=结束
+    int  ReadFrame(AVFrame* frame);                                                 // 读一包 → 解一帧，0=有帧 <0=结束
     bool Seek(qint64 pos_ms);                                                       // 跳转到指定毫秒
     void FlushBuffers();                                                            // 清空解码器缓存（seek 后必须调用）
 

@@ -158,11 +158,12 @@ bool FFmpegPlayer::IsPaused() const { return paused_.load(); }
 void FFmpegPlayer::DecodeLoop()
 {
     AVFrame* frame = av_frame_alloc();
-    AVPacket* audio_pkt = av_packet_alloc();                             // ← 新增
-    if (!frame || !audio_pkt) { av_frame_free(&frame); av_packet_free(&audio_pkt); return; }
+    if (!frame) return;
 
     AVFormatContext* fmt = decoder_->GetFormatContext();
     AVRational time_base = decoder_->GetVideoTimeBase();
+    int frame_count = 0;
+
     double fps = decoder_->GetFrameRate();
     int target_frame_delay_ms = (fps > 0) ? (int)(1000.0 / fps) : 33;
 
@@ -176,36 +177,40 @@ void FFmpegPlayer::DecodeLoop()
 
         auto start_time = std::chrono::steady_clock::now();
 
-        av_frame_unref(frame);
-        av_packet_unref(audio_pkt);                                      // ← 清理上次的音频包
-
-        int ret = decoder_->ReadFrame(frame, audio_pkt);
-
-        // ---- 返回 1 = 拿到一个音频包 ----
-        if (ret == 1)
+        // ================================================================
+        // 处理音频：把当前积压的音频包全部解码并喂给播放器
+        // ================================================================
+        if (audio_renderer_->IsOpened())
         {
-            if (audio_renderer_->IsOpened())
+            if (AVPacket* audio_pkt = decoder_->ReadAudioPacket())
             {
                 audio_renderer_->DecodePacket(audio_pkt);
+                av_packet_free(&audio_pkt);
             }
-            // 音频包处理完了，继续循环读下一包（还没拿到视频帧呢）
-            continue;
         }
 
-        // ---- 返回 <0 = 文件读完或出错 ----
+        // ================================================================
+        // 处理视频
+        // ================================================================
+        av_frame_unref(frame);
+        int ret = decoder_->ReadFrame(frame);
+
         if (ret < 0)
         {
             if (ret == AVERROR_EOF) emit SigFinished();
             break;
         }
 
-        // ---- 返回 0 = 拿到一帧视频 ----
+        frame_count++;
+
         if (frame->pts != AV_NOPTS_VALUE && fmt)
         {
-            current_pts_ms_ = static_cast<qint64>(
+            qint64 pts_ms = static_cast<qint64>(
                 frame->pts * av_q2d(time_base) * 1000.0);
+            current_pts_ms_ = pts_ms;
         }
 
+        // ---- 渲染视频帧 ----
         video_renderer_->Render(frame);
 
         // ---- 帧率控制 ----
@@ -218,5 +223,4 @@ void FFmpegPlayer::DecodeLoop()
     }
 
     av_frame_free(&frame);
-    av_packet_free(&audio_pkt);                                          // ← 释放音频包
 }
