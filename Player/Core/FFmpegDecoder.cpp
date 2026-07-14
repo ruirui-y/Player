@@ -204,8 +204,10 @@ void FFmpegDecoder::Close()
 }
 
 // 读一包数据，解一帧画面
-// 返回 0 = 成功解码一帧，AVERROR_EOF = 全部解完
-int FFmpegDecoder::ReadFrame(AVFrame* frame)
+// 返回 0 = 成功解码一帧（视频），frame 有效
+// 返回 1 = 拿到一个音频包，audio_pkt 有效
+// 返回 AVERROR_EOF = 全部解完
+int FFmpegDecoder::ReadFrame(AVFrame* frame, AVPacket* audio_pkt)
 {
     if (!codec_ctx_ || !fmt_ctx_) return -1;
 
@@ -228,24 +230,29 @@ int FFmpegDecoder::ReadFrame(AVFrame* frame)
             break;
         }
 
-        // 只处理视频流的包
+        // ---- 是视频包 → 喂给视频解码器 ----
         if (pkt->stream_index == video_stream_idx_)
         {
             int send_ret = avcodec_send_packet(codec_ctx_, pkt);
             av_packet_free(&pkt);
 
-            // send 成功后尝试收帧（不管 send 是 >=0 还是 EAGAIN）
             if (send_ret >= 0 || send_ret == AVERROR(EAGAIN))
             {
                 ret = avcodec_receive_frame(codec_ctx_, frame);
                 if (ret == 0) return 0;        // 成功解码一帧
                 if (ret == AVERROR_EOF) return ret;
-                // ret == EAGAIN → 继续循环读更多包
             }
+        }
+        // ---- 是音频包 → 通过参数返回给调用者 ----
+        else if (audio_pkt && pkt->stream_index == audio_stream_idx_)
+        {
+            av_packet_move_ref(audio_pkt, pkt);  // 所有权转移，pkt 变空
+            av_packet_free(&pkt);
+            return 1;                            // 返回 1 表示"拿到一个音频包"
         }
         else
         {
-            // 非视频包（音频、字幕），丢弃
+            // 非视频非音频（字幕等），丢弃
             av_packet_free(&pkt);
         }
     }
