@@ -42,6 +42,7 @@ private:
     ID3D11DeviceContext* d3d11_ctx_{ nullptr };                                 // D3D11 设备上下文
     IDXGISwapChain* swapchain_{ nullptr };                                      // 交换链，用于 Present 到窗口
     HWND                 hwnd_{ nullptr };                                      // 渲染窗口句柄
+    ID3D11RenderTargetView* rtv_{ nullptr };                                    // 渲染目标视图，创建交换链时一次性创建
 
     void* sws_ctx_{ nullptr };                                                  // SwsContext*，CPU RGB 转换
     int   frame_width_{ 0 };                                                    // 当前视频宽度

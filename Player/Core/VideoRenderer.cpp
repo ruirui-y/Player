@@ -161,6 +161,7 @@ void VideoRenderer::ReleaseD3D11()
     if (staging_y_texture_) { staging_y_texture_->Release();    staging_y_texture_ = nullptr; }
     if (swapchain_) { static_cast<IDXGISwapChain*>(swapchain_)->Release(); swapchain_ = nullptr; }
     if (d3d11_ctx_) { d3d11_ctx_->Release();            d3d11_ctx_ = nullptr; }
+    if (rtv_) { rtv_->Release(); rtv_ = nullptr; }
     if (d3d11_device_) { d3d11_device_->Release();         d3d11_device_ = nullptr; }
     qDebug() << "[VideoRenderer] D3D11 渲染资源已释放";
 }
@@ -270,6 +271,12 @@ bool VideoRenderer::CreateD3D11SwapChain(ID3D11Device* device,
     swapchain_ = sc;
     frame_width_ = width;
     frame_height_ = height;
+
+    // ---- 创建渲染目标视图 RTV ----
+    ID3D11Texture2D* backbuffer = nullptr;
+    swapchain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbuffer);
+    d3d11_device_->CreateRenderTargetView(backbuffer, nullptr, &rtv_);
+    backbuffer->Release();
 
     qDebug() << "[VideoRenderer] 交换链创建成功";
     return true;
@@ -426,30 +433,22 @@ void VideoRenderer::Render(AVFrame* frame)
 // GPU 渲染：下载 YUV → 上传 Y/UV 到两个独立纹理 → 着色器 NV12→RGB → Present
 void VideoRenderer::RenderHardware(AVFrame* frame)
 {
-    if (!d3d11_ctx_ || !swapchain_ || !srv_y_ || !srv_uv_) return;
+    if (!d3d11_ctx_ || !swapchain_ || !srv_y_ || !srv_uv_ || !rtv_) return;
 
-    // ---- 第一步：准备渲染目标（交换链后备缓冲） ----
-    ID3D11Texture2D* backbuffer = nullptr;
-    swapchain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backbuffer);
-
-    ID3D11RenderTargetView* rtv = nullptr;
-    d3d11_device_->CreateRenderTargetView(backbuffer, nullptr, &rtv);
-    backbuffer->Release();
-
-    d3d11_ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+    // ---- 第一步：绑定渲染目标（成员变量，每帧复用） ----
+    d3d11_ctx_->OMSetRenderTargets(1, &rtv_, nullptr);
     D3D11_VIEWPORT vp = { 0.0f, 0.0f, (float)frame_width_, (float)frame_height_, 0.0f, 1.0f };
     d3d11_ctx_->RSSetViewports(1, &vp);
 
     // ---- 第二步：将帧从 GPU 显存下载到 CPU 内存 ----
     AVFrame* sw_frame = av_frame_alloc();
-    if (!sw_frame) { rtv->Release(); return; }
+    if (!sw_frame) return;
 
     int ret = av_hwframe_transfer_data(sw_frame, frame, 0);
     if (ret != 0 || !sw_frame->data[0] || !sw_frame->data[1])
     {
         qDebug() << "RenderHardware: av_hwframe_transfer_data failed" << ret;
         av_frame_free(&sw_frame);
-        rtv->Release();
         return;
     }
 
@@ -496,14 +495,12 @@ void VideoRenderer::RenderHardware(AVFrame* frame)
     d3d11_ctx_->PSSetShaderResources(0, 2, srvs);
     d3d11_ctx_->PSSetSamplers(0, 1, &sampler_linear_);
 
-    // Draw(3,0) 触发顶点着色器生成全屏三角形
     d3d11_ctx_->Draw(3, 0);
-    swapchain_->Present(1, 0);   // Present(1,0) = 等待垂直同步
+    swapchain_->Present(1, 0);
 
-    // ---- 第六步：清理当前帧资源 ----
+    // ---- 第六步：清理本帧绑定的 SRV（不影响下一帧） ----
     ID3D11ShaderResourceView* null_srvs[] = { nullptr, nullptr };
     d3d11_ctx_->PSSetShaderResources(0, 2, null_srvs);
-    rtv->Release();
 }
 
 // CPU 软解渲染：sws_scale 做 YUV→RGB 转换 → 发射 QImage 到主线程

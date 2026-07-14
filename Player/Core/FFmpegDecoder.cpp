@@ -176,11 +176,9 @@ void FFmpegDecoder::Close()
 int FFmpegDecoder::ReadFrame(AVFrame* frame)
 {
     if (!codec_ctx_ || !fmt_ctx_) return -1;
-    AVCodecContext* ctx = static_cast<AVCodecContext*>(codec_ctx_);
-    AVFormatContext* fmt = static_cast<AVFormatContext*>(fmt_ctx_);
 
     // ---- 第一步：先尝试收帧（解码器可能还有缓存的帧） ----
-    int ret = avcodec_receive_frame(ctx, frame);
+    int ret = avcodec_receive_frame(codec_ctx_, frame);
     if (ret == 0) return 0;                    // 成功收到一帧
     if (ret == AVERROR_EOF) return ret;         // 解码器已 flush 完毕
 
@@ -188,26 +186,26 @@ int FFmpegDecoder::ReadFrame(AVFrame* frame)
     while (ret == AVERROR(EAGAIN))
     {
         AVPacket* pkt = av_packet_alloc();
-        int read_ret = av_read_frame(fmt, pkt);
+        int read_ret = av_read_frame(fmt_ctx_, pkt);
 
         if (read_ret < 0)
         {
             // 文件读完了，发送 NULL 包让解码器 flush 缓存
             av_packet_free(&pkt);
-            avcodec_send_packet(ctx, nullptr);
+            avcodec_send_packet(codec_ctx_, nullptr);
             break;
         }
 
         // 只处理视频流的包
         if (pkt->stream_index == video_stream_idx_)
         {
-            int send_ret = avcodec_send_packet(ctx, pkt);
+            int send_ret = avcodec_send_packet(codec_ctx_, pkt);
             av_packet_free(&pkt);
 
             // send 成功后尝试收帧（不管 send 是 >=0 还是 EAGAIN）
             if (send_ret >= 0 || send_ret == AVERROR(EAGAIN))
             {
-                ret = avcodec_receive_frame(ctx, frame);
+                ret = avcodec_receive_frame(codec_ctx_, frame);
                 if (ret == 0) return 0;        // 成功解码一帧
                 if (ret == AVERROR_EOF) return ret;
                 // ret == EAGAIN → 继续循环读更多包
@@ -223,7 +221,7 @@ int FFmpegDecoder::ReadFrame(AVFrame* frame)
     // ---- 第三步：flush 阶段，吐出解码器剩余的帧 ----
     while (true)
     {
-        ret = avcodec_receive_frame(ctx, frame);
+        ret = avcodec_receive_frame(codec_ctx_, frame);
         if (ret == 0) return 0;                // flush 阶段解出一帧
         return AVERROR_EOF;                    // 全部解完，返回 EOF
     }
