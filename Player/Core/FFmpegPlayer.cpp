@@ -1,8 +1,7 @@
-#include "FFmpegPlayer.h"
+﻿#include "FFmpegPlayer.h"
 #include "FFmpegDecoder.h"
-#include "D3D11Pipeline.h"
-#include "Nv12GpuUploader.h"
-#include "SoftwareRenderer.h"
+#include "VideoRenderer.h"
+#include "AudioRenderer.h"
 #include <QDebug>
 #include <chrono>
 
@@ -13,17 +12,16 @@ extern "C"
 }
 
 // ---- 构造 ----
-// 创建解码层 + 三个渲染组件，连接软解回退的 QImage 信号
+// 创建解码层 + 视频渲染层 + 音频渲染层
 FFmpegPlayer::FFmpegPlayer(QObject* parent)
     : QObject(parent)
 {
     decoder_ = new FFmpegDecoder();
-    d3d11_pipeline_ = new D3D11Pipeline();
-    nv12_uploader_ = new Nv12GpuUploader();
-    sw_renderer_ = new SoftwareRenderer(this);
+    video_renderer_ = new VideoRenderer(this);
+    audio_renderer_ = new AudioRenderer(this);
 
     // 软解回退时，渲染器的 QImage 信号转发出去给 MainWindow 显示
-    QObject::connect(sw_renderer_, &SoftwareRenderer::SigFrameReady,
+    QObject::connect(video_renderer_, &VideoRenderer::SigFrameReady,
         this, &FFmpegPlayer::SigFrameReady);
 }
 
@@ -31,14 +29,14 @@ FFmpegPlayer::~FFmpegPlayer()
 {
     Close();
     delete decoder_;
-    delete d3d11_pipeline_;
-    delete nv12_uploader_;
+    delete video_renderer_;
+    delete audio_renderer_;
 }
 
 void FFmpegPlayer::SetVideoHwnd(HWND hwnd)
 {
     hwnd_ = hwnd;
-    d3d11_pipeline_->SetHwnd(hwnd);
+    video_renderer_->SetHwnd(hwnd);
 }
 
 // 打开文件：尝试硬解，如果失败回退软解
@@ -73,20 +71,20 @@ bool FFmpegPlayer::OpenFile(const QString& path)
         ID3D11Device* device = decoder_->GetD3D11Device();
         if (device)
         {
-            // 获取设备上下文
-            ID3D11DeviceContext* ctx = nullptr;
-            device->GetImmediateContext(&ctx);
-
-            // 创建交换链 + 着色器
-            if (!d3d11_pipeline_->CreateSwapChain(device, w, h))
+            if (!video_renderer_->Init(device, w, h))
             {
                 qDebug() << "[FFmpegPlayer] 创建 GPU 管线失败，将回退到 CPU 渲染";
             }
-
-            // 初始化 GPU 上传器
-            nv12_uploader_->Init(device, ctx);
         }
     }
+
+    // ---- 第三步：初始化音频解码器 ----
+    // TODO: FFmpegDecoder 增加音频流查找后，从解码器获取 audio codecpar
+    // AVCodecParameters* audio_par = decoder_->GetAudioCodecPar();
+    // if (audio_par)
+    // {
+    //     audio_renderer_->Open(audio_par);
+    // }
 
     qDebug() << "[FFmpegPlayer] === 文件加载完毕，等待 Play指令 ===";
     emit SigLoaded(duration_ms_);
@@ -108,6 +106,10 @@ void FFmpegPlayer::Play()
     }
 
     qDebug() << "[FFmpegPlayer] 发起启动解码线程";
+
+    // 启动音频播放
+    // audio_renderer_->Start();
+
     playing_ = true;
     paused_ = false;
     decode_thread_ = std::thread(&FFmpegPlayer::DecodeLoop, this);
@@ -119,6 +121,7 @@ void FFmpegPlayer::Pause()
     if (!playing_) return;
     qDebug() << "[FFmpegPlayer] 暂停播放";
     paused_ = true;
+    // audio_renderer_->Pause();
     emit SigPlayState("paused");
 }
 
@@ -132,6 +135,7 @@ void FFmpegPlayer::Stop()
     if (decode_thread_.joinable()) decode_thread_.join();
 
     decoder_->FlushBuffers();
+    // audio_renderer_->Stop();
     current_pts_ms_ = 0;
     emit SigPlayState("stopped");
 }
@@ -141,8 +145,8 @@ void FFmpegPlayer::Close()
     qDebug() << "[FFmpegPlayer] 关闭播放器引擎";
     Stop();
     decoder_->Close();
-    d3d11_pipeline_->Release();
-    nv12_uploader_->Release();
+    video_renderer_->Release();
+    // audio_renderer_->Close();
     duration_ms_ = 0;
 }
 
@@ -203,49 +207,9 @@ void FFmpegPlayer::DecodeLoop()
         }
 
         // ================================================================
-        // 渲染当前帧：优先 GPU 硬解渲染，失败回退 CPU 软解
+        // 渲染当前帧 —— 内部自动分派 GPU 硬解 / CPU 软解
         // ================================================================
-        bool rendered = false;
-
-        // ---- 路径一：GPU 硬解帧 → GPU 渲染管线 ----
-        if (frame->format == AV_PIX_FMT_D3D11 && d3d11_pipeline_->IsReady())
-        {
-            ID3D11ShaderResourceView* srv_y = nullptr;
-            ID3D11ShaderResourceView* srv_uv = nullptr;
-
-            if (nv12_uploader_->UploadFrame(frame, srv_y, srv_uv))
-            {
-                d3d11_pipeline_->Execute(srv_y, srv_uv,
-                    decoder_->GetWidth(), decoder_->GetHeight());
-                rendered = true;
-            }
-        }
-
-        // ---- 路径二：GPU 渲染不可用 → CPU 软解回退 ----
-        if (!rendered)
-        {
-            // D3D11 硬解帧需要先下载到 CPU 内存
-            if (frame->format == AV_PIX_FMT_D3D11 ||
-                frame->format == AV_PIX_FMT_D3D11VA_VLD ||
-                frame->format == AV_PIX_FMT_DXVA2_VLD)
-            {
-                AVFrame* sw_frame = av_frame_alloc();
-                if (sw_frame)
-                {
-                    int download_ret = av_hwframe_transfer_data(sw_frame, frame, 0);
-                    if (download_ret == 0)
-                    {
-                        sw_renderer_->Render(sw_frame);
-                    }
-                    av_frame_free(&sw_frame);
-                }
-            }
-            else
-            {
-                // 纯软解帧，直接渲染
-                sw_renderer_->Render(frame);
-            }
-        }
+        video_renderer_->Render(frame);
 
         // ---- 帧率控制：补齐休眠时间 ----
         auto end_time = std::chrono::steady_clock::now();
