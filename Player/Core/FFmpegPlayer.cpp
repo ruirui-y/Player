@@ -79,7 +79,6 @@ bool FFmpegPlayer::OpenFile(const QString& path)
     }
 
     // ---- 第三步：初始化音频解码器 ----
-    // TODO: FFmpegDecoder 增加音频流查找后，从解码器获取 audio codecpar
     AVCodecParameters* audio_par = decoder_->GetAudioCodecPar();
     if (audio_par)
     {
@@ -136,7 +135,7 @@ void FFmpegPlayer::Stop()
     if (decode_thread_.joinable()) decode_thread_.join();
 
     decoder_->FlushBuffers();
-    // audio_renderer_->Stop();
+    audio_renderer_->Stop();
     current_pts_ms_ = 0;
     emit SigPlayState("stopped");
 }
