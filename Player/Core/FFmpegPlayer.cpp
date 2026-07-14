@@ -80,11 +80,12 @@ bool FFmpegPlayer::OpenFile(const QString& path)
 
     // ---- 第三步：初始化音频解码器 ----
     // TODO: FFmpegDecoder 增加音频流查找后，从解码器获取 audio codecpar
-    // AVCodecParameters* audio_par = decoder_->GetAudioCodecPar();
-    // if (audio_par)
-    // {
-    //     audio_renderer_->Open(audio_par);
-    // }
+    AVCodecParameters* audio_par = decoder_->GetAudioCodecPar();
+    if (audio_par)
+    {
+        bool audio_ok = audio_renderer_->Open(audio_par);
+        qDebug() << "[FFmpegPlayer] 音频解码器初始化:" << (audio_ok ? "成功" : "失败");
+    }
 
     qDebug() << "[FFmpegPlayer] === 文件加载完毕，等待 Play指令 ===";
     emit SigLoaded(duration_ms_);
@@ -108,7 +109,7 @@ void FFmpegPlayer::Play()
     qDebug() << "[FFmpegPlayer] 发起启动解码线程";
 
     // 启动音频播放
-    // audio_renderer_->Start();
+    audio_renderer_->Start();
 
     playing_ = true;
     paused_ = false;
@@ -121,7 +122,7 @@ void FFmpegPlayer::Pause()
     if (!playing_) return;
     qDebug() << "[FFmpegPlayer] 暂停播放";
     paused_ = true;
-    // audio_renderer_->Pause();
+    audio_renderer_->Pause();
     emit SigPlayState("paused");
 }
 
@@ -146,7 +147,7 @@ void FFmpegPlayer::Close()
     Stop();
     decoder_->Close();
     video_renderer_->Release();
-    // audio_renderer_->Close();
+    audio_renderer_->Close();
     duration_ms_ = 0;
 }
 
@@ -155,7 +156,6 @@ qint64 FFmpegPlayer::GetDuration() const { return duration_ms_; }
 bool FFmpegPlayer::IsPlaying() const { return playing_.load() && !paused_.load(); }
 bool FFmpegPlayer::IsPaused() const { return paused_.load(); }
 
-// ---- 解码线程主循环 ----
 void FFmpegPlayer::DecodeLoop()
 {
     AVFrame* frame = av_frame_alloc();
@@ -165,13 +165,11 @@ void FFmpegPlayer::DecodeLoop()
     AVRational time_base = decoder_->GetVideoTimeBase();
     int frame_count = 0;
 
-    // 根据视频实际帧率计算每帧间隔，用于帧率控制
     double fps = decoder_->GetFrameRate();
     int target_frame_delay_ms = (fps > 0) ? (int)(1000.0 / fps) : 33;
 
     while (playing_)
     {
-        // ---- 暂停时休眠，不退出线程 ----
         if (paused_)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -180,25 +178,32 @@ void FFmpegPlayer::DecodeLoop()
 
         auto start_time = std::chrono::steady_clock::now();
 
+        // ================================================================
+        // 处理音频：把当前积压的音频包全部解码并喂给播放器
+        // ================================================================
+        if (audio_renderer_->IsOpened())
+        {
+            if (AVPacket* audio_pkt = decoder_->ReadAudioPacket())
+            {
+                audio_renderer_->DecodePacket(audio_pkt);
+                av_packet_free(&audio_pkt);
+            }
+        }
+
+        // ================================================================
+        // 处理视频
+        // ================================================================
         av_frame_unref(frame);
         int ret = decoder_->ReadFrame(frame);
 
-        // ---- 文件读完或解码出错 ----
         if (ret < 0)
         {
-            qDebug() << "DecodeLoop: ReadFrame returned" << ret
-                << "AVERROR_EOF =" << AVERROR_EOF
-                << "frame_count =" << frame_count;
-            if (ret == AVERROR_EOF)
-            {
-                emit SigFinished();
-            }
+            if (ret == AVERROR_EOF) emit SigFinished();
             break;
         }
 
         frame_count++;
 
-        // ---- 更新当前播放 PTS ----
         if (frame->pts != AV_NOPTS_VALUE && fmt)
         {
             qint64 pts_ms = static_cast<qint64>(
@@ -206,26 +211,16 @@ void FFmpegPlayer::DecodeLoop()
             current_pts_ms_ = pts_ms;
         }
 
-        // ================================================================
-        // 渲染当前帧 —— 内部自动分派 GPU 硬解 / CPU 软解
-        // ================================================================
+        // ---- 渲染视频帧 ----
         video_renderer_->Render(frame);
 
-        // ---- 帧率控制：补齐休眠时间 ----
+        // ---- 帧率控制 ----
         auto end_time = std::chrono::steady_clock::now();
         int elapsed_ms = std::chrono::duration_cast<
             std::chrono::milliseconds>(end_time - start_time).count();
-
         int sleep_time = target_frame_delay_ms - elapsed_ms;
-        if (sleep_time > 0)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(sleep_time));
-        }
-        else
-        {
-            // 解码+渲染超过帧间隔，稍微歇一秒避免 CPU 满负荷
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(sleep_time > 0 ? sleep_time : 1));
     }
 
     av_frame_free(&frame);

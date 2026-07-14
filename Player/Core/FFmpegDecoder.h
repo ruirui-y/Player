@@ -5,10 +5,13 @@
 
 struct AVFormatContext;     // FFmpeg 解封装上下文（前向声明）
 struct AVCodecContext;      // FFmpeg 解码器上下文（前向声明）
+struct AVCodecParameters;   // FFmpeg 编码参数（前向声明）
 struct AVFrame;             // FFmpeg 帧结构（前向声明）
 struct AVRational;          // FFmpeg 有理数结构（前向声明）
 struct AVBufferRef;         // FFmpeg 硬解设备上下文（前向声明）
 struct ID3D11Device;        // DirectX11 设备（前向声明）
+struct AVPacket;            // FFmpeg 压缩包（前向声明）
+
 
 class FFmpegDecoder
 {
@@ -25,6 +28,7 @@ public:
     bool Seek(qint64 pos_ms);                                                       // 跳转到指定毫秒
     void FlushBuffers();                                                            // 清空解码器缓存（seek 后必须调用）
 
+    // ---- 视频相关 ----
     qint64      GetDuration() const;                                                // 视频总时长（毫秒）
     int         GetWidth() const;                                                   // 视频宽度
     int         GetHeight() const;                                                  // 视频高度
@@ -34,12 +38,22 @@ public:
     bool        IsHardwareDecoding() const;                                         // 当前是否正在使用硬解
     double      GetFrameRate() const;                                               // 获取视频帧率
 
+    // ---- 音频相关 ----
+    AVCodecParameters* GetAudioCodecPar() const;                                    // 获取音频编码参数（AudioRenderer 用）
+    int         GetAudioStreamIndex() const;                                        // 获取音频流索引
+    bool        HasAudioStream() const;                                             // 是否有音频流
+    AVPacket* ReadAudioPacket();                                                    // 读一个音频压缩包，返回 nullptr 表示没有更多
+
 private:
     AVFormatContext* fmt_ctx_{ nullptr };                                           // 解封装上下文
-    AVCodecContext* codec_ctx_{ nullptr };                                          // 解码器上下文
-    int              video_stream_idx_{ -1 };                                       // 视频流在文件中的索引
+    AVCodecContext* codec_ctx_{ nullptr };                                          // 视频解码器上下文
+    int               video_stream_idx_{ -1 };                                      // 视频流在文件中的索引
     AVBufferRef* hw_device_ctx_{ nullptr };                                         // AVBufferRef*，硬解设备上下文
-    bool             is_hardware_{ false };                                         // 硬解是否成功初始化
+    bool              is_hardware_{ false };                                        // 硬解是否成功初始化
+
+    // ---- 音频相关成员 ----
+    int               audio_stream_idx_{ -1 };                                      // 音频流索引，-1=无音频
+    AVCodecParameters* audio_codec_par_{ nullptr };                                 // 音频编码参数（从流拷贝，独立管理）
 };
 
 #endif // FFMPEGDECODER_H

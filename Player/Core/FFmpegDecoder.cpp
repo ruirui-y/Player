@@ -56,6 +56,30 @@ bool FFmpegDecoder::OpenFile(const QString& path, bool try_hardware)
         return false;
     }
 
+    // ---- 找到音频流 ----
+    audio_stream_idx_ = -1;
+    for (unsigned int i = 0; i < fmt_ctx_->nb_streams; ++i)
+    {
+        if (fmt_ctx_->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+        {
+            audio_stream_idx_ = static_cast<int>(i);
+            break;
+        }
+    }
+
+    if (audio_stream_idx_ >= 0)
+    {
+        // 拷贝一份音频编码参数，AudioRenderer 会用它独立打开解码器
+        audio_codec_par_ = avcodec_parameters_alloc();
+        avcodec_parameters_copy(audio_codec_par_,
+            fmt_ctx_->streams[audio_stream_idx_]->codecpar);
+        qDebug() << "[FFmpegDecoder] 找到音频流，索引 =" << audio_stream_idx_;
+    }
+    else
+    {
+        qDebug() << "[FFmpegDecoder] 未找到音频流（纯视频文件）";
+    }
+
     // ---- 第四步：根据编码格式找到对应的解码器 ----
     AVCodecParameters* codecpar = fmt_ctx_->streams[video_stream_idx_]->codecpar;
     const AVCodec* codec = avcodec_find_decoder(codecpar->codec_id);
@@ -169,6 +193,11 @@ void FFmpegDecoder::Close()
         AVBufferRef* ref = static_cast<AVBufferRef*>(hw_device_ctx_);
         av_buffer_unref(&ref);
         hw_device_ctx_ = nullptr;
+    }
+    if (audio_codec_par_)
+    {
+        avcodec_parameters_free(&audio_codec_par_);
+        audio_codec_par_ = nullptr;
     }
     video_stream_idx_ = -1;
     is_hardware_ = false;
@@ -300,4 +329,50 @@ double FFmpegDecoder::GetFrameRate() const
     if (stream->codecpar->framerate.den > 0 && stream->codecpar->framerate.num > 0)
         return av_q2d(stream->codecpar->framerate);
     return 30.0;  // 实在获取不到就默认 30fps
+}
+
+// 获取音频编码参数（给 AudioRenderer 用）
+AVCodecParameters* FFmpegDecoder::GetAudioCodecPar() const
+{
+    return audio_codec_par_;
+}
+
+// 获取音频流索引
+int FFmpegDecoder::GetAudioStreamIndex() const
+{
+    return audio_stream_idx_;
+}
+
+// 是否有音频流
+bool FFmpegDecoder::HasAudioStream() const
+{
+    return audio_stream_idx_ >= 0;
+}
+
+// 读一个音频压缩包
+// 从文件中一直读取，直到找到音频包或文件结束
+AVPacket* FFmpegDecoder::ReadAudioPacket()
+{
+    if (!fmt_ctx_ || audio_stream_idx_ < 0) return nullptr;
+
+    while (true)
+    {
+        AVPacket* pkt = av_packet_alloc();
+        int ret = av_read_frame(fmt_ctx_, pkt);
+
+        if (ret < 0)
+        {
+            // 文件读完了
+            av_packet_free(&pkt);
+            return nullptr;
+        }
+
+        if (pkt->stream_index == audio_stream_idx_)
+        {
+            return pkt;  // 调用者负责 av_packet_free
+        }
+
+        // 非音频包（视频、字幕），丢弃
+        av_packet_free(&pkt);
+    }
 }
