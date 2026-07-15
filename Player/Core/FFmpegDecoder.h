@@ -2,6 +2,7 @@
 #define FFMPEGDECODER_H
 
 #include <QString>
+#include <QQueue>
 
 struct AVFormatContext;     // FFmpeg 解封装上下文（前向声明）
 struct AVCodecContext;      // FFmpeg 解码器上下文（前向声明）
@@ -24,11 +25,11 @@ public:
     ID3D11Device* GetD3D11Device() const;                                           // 返回解码器内部的 ID3D11Device*
     void Close();                                                                   // 关闭文件，释放所有 FFmpeg 资源
 
-    int  ReadFrame(AVFrame* frame);                                                 // 读一包 → 解一帧，0=有帧 <0=结束
     bool Seek(qint64 pos_ms);                                                       // 跳转到指定毫秒
     void FlushBuffers();                                                            // 清空解码器缓存（seek 后必须调用）
 
     // ---- 视频相关 ----
+    int  ReadFrame(AVFrame* frame);                                                 // 读一包 → 解一帧，0=有帧 <0=结束
     qint64      GetDuration() const;                                                // 视频总时长（毫秒）
     int         GetWidth() const;                                                   // 视频宽度
     int         GetHeight() const;                                                  // 视频高度
@@ -39,10 +40,10 @@ public:
     double      GetFrameRate() const;                                               // 获取视频帧率
 
     // ---- 音频相关 ----
+    AVPacket* ReadAudioPacket();                                                    // 读一个音频压缩包，返回 nullptr 表示没有更多
     AVCodecParameters* GetAudioCodecPar() const;                                    // 获取音频编码参数（AudioRenderer 用）
     int         GetAudioStreamIndex() const;                                        // 获取音频流索引
     bool        HasAudioStream() const;                                             // 是否有音频流
-    AVPacket* ReadAudioPacket();                                                    // 读一个音频压缩包，返回 nullptr 表示没有更多
 
 private:
     AVFormatContext* fmt_ctx_{ nullptr };                                           // 解封装上下文
@@ -54,6 +55,7 @@ private:
     // ---- 音频相关成员 ----
     int               audio_stream_idx_{ -1 };                                      // 音频流索引，-1=无音频
     AVCodecParameters* audio_codec_par_{ nullptr };                                 // 音频编码参数（从流拷贝，独立管理）
+    QQueue<AVPacket*> audio_pkt_queue_;                                             // 音频包队列（ReadFrame 内部读到的暂存）
 };
 
 #endif // FFMPEGDECODER_H

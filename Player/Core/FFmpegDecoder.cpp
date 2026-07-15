@@ -176,6 +176,13 @@ ID3D11Device* FFmpegDecoder::GetD3D11Device() const
 void FFmpegDecoder::Close()
 {
     qDebug() << "[FFmpegDecoder] 释放所有资源";
+
+    // 清理音频包队列
+    //while (!audio_pkt_queue_.isEmpty())
+    //{
+    //    av_packet_free(&(audio_pkt_queue_.dequeue()));
+    //}
+
     if (codec_ctx_)
     {
         AVCodecContext* p = static_cast<AVCodecContext*>(codec_ctx_);
@@ -243,10 +250,16 @@ int FFmpegDecoder::ReadFrame(AVFrame* frame)
                 // ret == EAGAIN → 继续循环读更多包
             }
         }
+        // ReadFrame 内部的 else 分支改为：
+        if (pkt->stream_index == audio_stream_idx_)
+        {
+            // 放进队列，不丢
+            audio_pkt_queue_.enqueue(pkt);
+            continue;                 // 继续读下一个包（我要找视频包）
+        }
         else
         {
-            // 非视频包（音频、字幕），丢弃
-            av_packet_free(&pkt);
+            av_packet_free(&pkt);     // 字幕等，丢掉
         }
     }
 
@@ -316,6 +329,47 @@ bool FFmpegDecoder::IsHardwareDecoding() const
     return is_hardware_;
 }
 
+// 读一个音频压缩包
+// 从文件中一直读取，直到找到音频包或文件结束
+AVPacket* FFmpegDecoder::ReadAudioPacket()
+{
+    if (!fmt_ctx_ || audio_stream_idx_ < 0) return nullptr;
+
+    // 优先从队列取
+    if (!audio_pkt_queue_.isEmpty())
+    {
+        return audio_pkt_queue_.dequeue();
+    }
+
+    // 队列空了，再从文件读
+    while (true)
+    {
+        AVPacket* pkt = av_packet_alloc();
+        int ret = av_read_frame(fmt_ctx_, pkt);
+
+        if (ret < 0)
+        {
+            av_packet_free(&pkt);
+            return nullptr;
+        }
+
+        if (pkt->stream_index == audio_stream_idx_)
+        {
+            return pkt;
+        }
+
+        if (pkt->stream_index == video_stream_idx_)
+        {
+            // 视频包直接投递给解码器，不缓存
+            int send_ret = avcodec_send_packet(codec_ctx_, pkt);
+            av_packet_free(&pkt);
+            return nullptr;
+        }
+
+        av_packet_free(&pkt);  // 字幕等，丢掉
+    }
+}
+
 // 获取视频帧率，用于解码线程做帧率控制
 double FFmpegDecoder::GetFrameRate() const
 {
@@ -347,32 +401,4 @@ int FFmpegDecoder::GetAudioStreamIndex() const
 bool FFmpegDecoder::HasAudioStream() const
 {
     return audio_stream_idx_ >= 0;
-}
-
-// 读一个音频压缩包
-// 从文件中一直读取，直到找到音频包或文件结束
-AVPacket* FFmpegDecoder::ReadAudioPacket()
-{
-    if (!fmt_ctx_ || audio_stream_idx_ < 0) return nullptr;
-
-    while (true)
-    {
-        AVPacket* pkt = av_packet_alloc();
-        int ret = av_read_frame(fmt_ctx_, pkt);
-
-        if (ret < 0)
-        {
-            // 文件读完了
-            av_packet_free(&pkt);
-            return nullptr;
-        }
-
-        if (pkt->stream_index == audio_stream_idx_)
-        {
-            return pkt;  // 调用者负责 av_packet_free
-        }
-
-        // 非音频包（视频、字幕），丢弃
-        av_packet_free(&pkt);
-    }
 }

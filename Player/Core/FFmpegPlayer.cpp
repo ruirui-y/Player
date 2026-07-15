@@ -182,7 +182,7 @@ void FFmpegPlayer::DecodeLoop()
         // ================================================================
         if (audio_renderer_->IsOpened())
         {
-            if (AVPacket* audio_pkt = decoder_->ReadAudioPacket())
+            while (AVPacket* audio_pkt = decoder_->ReadAudioPacket())
             {
                 audio_renderer_->DecodePacket(audio_pkt);
                 av_packet_free(&audio_pkt);
