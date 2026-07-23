@@ -10,8 +10,10 @@ extern "C"
 
 #include <QDebug>
 
-Reader::Reader(SafeQueue<AVPacket*>& packet_queue)
-    : packet_queue_(packet_queue)
+Reader::Reader(SafeQueue<AVPacket*>& video_packet_queue,
+    SafeQueue<AVPacket*>& audio_packet_queue)
+    : video_packet_queue_(video_packet_queue)
+    , audio_packet_queue_(audio_packet_queue)
 {
 }
 
@@ -59,8 +61,6 @@ bool Reader::Open(const QString& url)
         if (fmt_ctx_->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
         {
             audio_stream_idx_ = static_cast<int>(i);
-
-            // 拷贝音频编码参数，Decoder 独立打开解码器用
             audio_codec_par_ = avcodec_parameters_alloc();
             avcodec_parameters_copy(audio_codec_par_,
                 fmt_ctx_->streams[audio_stream_idx_]->codecpar);
@@ -80,7 +80,6 @@ bool Reader::Open(const QString& url)
     return true;
 }
 
-// 启动读取线程
 void Reader::Start()
 {
     if (running_) return;
@@ -88,17 +87,15 @@ void Reader::Start()
     thread_ = std::thread(&Reader::ReadLoop, this);
 }
 
-// 停止读取线程
 void Reader::Stop()
 {
     if (!running_) return;
     running_ = false;
+    video_packet_queue_.Stop();
+    audio_packet_queue_.Stop();
     if (thread_.joinable())
         thread_.join();
-    // 通知消费者队列已停止
-    packet_queue_.Stop();
 
-    // 清理资源
     if (fmt_ctx_)
     {
         avformat_close_input(&fmt_ctx_);
@@ -111,7 +108,6 @@ void Reader::Stop()
     }
 }
 
-// 跳转
 void Reader::Seek(qint64 pts_ms)
 {
     seek_target_ms_ = pts_ms;
@@ -131,8 +127,8 @@ void Reader::ReadLoop()
             int64_t ts = target_ms * AV_TIME_BASE / 1000;
             av_seek_frame(fmt_ctx_, -1, ts, AVSEEK_FLAG_BACKWARD);
             qDebug() << "[Reader] 跳转到" << target_ms << "ms";
-            // 清空队列，丢弃旧包
-            packet_queue_.Clear();
+            video_packet_queue_.Clear();
+            audio_packet_queue_.Clear();
         }
 
         // ---- 第二步：读一个压缩包 ----
@@ -141,23 +137,27 @@ void Reader::ReadLoop()
 
         if (ret < 0)
         {
-            // 文件读完或出错 → 通知解码线程结束
             av_packet_free(&pkt);
             qDebug() << "[Reader] 读取结束";
-            // 发送哨兵
-            packet_queue_.Push(nullptr);
+
+            // ---- 通知两个解码线程文件读取完毕 ----
+            video_packet_queue_.Push(nullptr);
+            audio_packet_queue_.Push(nullptr);
             break;
         }
 
-        // ---- 第三步：只保留音视频包，丢弃字幕等其他流 ----
-        if (pkt->stream_index == video_stream_idx_ ||
-            pkt->stream_index == audio_stream_idx_)
+        // ---- 第三步：按流类型分拣到不同队列 ----
+        if (pkt->stream_index == video_stream_idx_)
         {
-            packet_queue_.Push(pkt);
+            video_packet_queue_.Push(pkt);
+        }
+        else if (pkt->stream_index == audio_stream_idx_)
+        {
+            audio_packet_queue_.Push(pkt);
         }
         else
         {
-            av_packet_free(&pkt);
+            av_packet_free(&pkt);    // 字幕等，丢弃
         }
     }
 

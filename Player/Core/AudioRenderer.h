@@ -34,7 +34,6 @@ public:
     void Close();                                                               // 关闭释放
     void Flush();                                                               // 清空缓存
 
-    bool DecodePacket(AVPacket* packet);                                        // 解码一个音频包（解码线程调用）
     double GetClock() const;                                                    // 当前音频时钟（毫秒）
 
     bool IsOpened() const { return codec_ctx_ != nullptr; }

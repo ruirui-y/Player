@@ -151,60 +151,6 @@ void AudioRenderer::Flush()
     pcm_queue_.clear();
 }
 
-// 解码一个音频包，返回转换后的 PCM 数据
-bool AudioRenderer::DecodePacket(AVPacket* packet)
-{
-    if (!codec_ctx_ || !playing_ || paused_) return false;
-
-    // ---- 第一步：把压缩包喂给解码器 ----
-    int ret = avcodec_send_packet(codec_ctx_, packet);
-    if (ret < 0) return false;
-
-    // ---- 第二步：循环收帧，直到解码器说 EAGAIN ----
-    AVFrame* frame = av_frame_alloc();
-    if (!frame) return false;
-
-    while (ret >= 0)
-    {
-        ret = avcodec_receive_frame(codec_ctx_, frame);
-        if (ret < 0) break;
-
-        // ---- 第三步：重采样为 16位 48000Hz 立体声 PCM ----
-        if (!swr_ctx_) break;
-
-        uint8_t* pcm_buffer = nullptr;
-        int dst_samples = av_rescale_rnd(
-            swr_get_delay(swr_ctx_, frame->sample_rate) + frame->nb_samples,
-            sample_rate_, frame->sample_rate, AV_ROUND_UP);
-
-        int dst_buf_size = av_samples_alloc(&pcm_buffer, nullptr,
-            2, dst_samples, AV_SAMPLE_FMT_S16, 1);
-
-        int samples_out = swr_convert(swr_ctx_, &pcm_buffer, dst_samples,
-            (const uint8_t**)frame->data, frame->nb_samples);
-
-        if (samples_out > 0)
-        {
-            int bytes_per_sample = av_get_bytes_per_sample(AV_SAMPLE_FMT_S16);
-            int pcm_size = samples_out * 2 * bytes_per_sample;
-
-            QByteArray pcm_data((const char*)pcm_buffer, pcm_size);
-
-            // ---- 第四步：把 PCM 数据喂给音频设备 ----
-            FeedPcmData(pcm_data);
-
-            // ---- 第五步：更新音频时钟 ----
-            // 当前时钟 = 已写入的总样本数 / 采样率 * 1000
-            audio_clock_ = (double)total_written_ / (sample_rate_ * 2 * bytes_per_sample) * 1000.0;
-        }
-
-        av_freep(&pcm_buffer);
-    }
-
-    av_frame_free(&frame);
-    return true;
-}
-
 // 把 PCM 数据写入音频设备
 void AudioRenderer::FeedPcmData(const QByteArray& pcm_data)
 {

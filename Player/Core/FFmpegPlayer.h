@@ -7,7 +7,8 @@
 #include <thread>
 #include "SafeQueue.h"
 #include "Reader.h"
-#include "Decoder.h"
+#include "VideoDecoder.h"
+#include "AudioDecoder.h"
 
 class VideoRenderer;        // 视频渲染层（前向声明）
 class AudioRenderer;        // 音频渲染层（前向声明）
@@ -44,24 +45,27 @@ signals:
     void SigPlayState(const QString& state);                                            // 播放状态变化
 
 private:
-    void DecodeLoop();                                                                  // 解码线程主循环
+    void DecodeLoop();                                                                  // 渲染线程主循环
 
     VideoRenderer* video_renderer_{ nullptr };                                          // 视频渲染层
     AudioRenderer* audio_renderer_{ nullptr };                                          // 音频渲染层
 
     HWND hwnd_{ nullptr };                                                              // 窗口句柄
 
-    std::thread         decode_thread_;                                                 // 解码线程
+    std::thread         decode_thread_;                                                 // 渲染线程
     std::atomic<bool>   playing_{ false };                                              // 播放中
     std::atomic<bool>   paused_{ false };                                               // 已暂停
     std::atomic<qint64> current_pts_ms_{ 0 };                                           // 当前播放位置（毫秒）
     qint64              duration_ms_{ 0 };                                              // 视频总时长
 
-    // 队列
-    SafeQueue<AVPacket*> packet_queue_;
-    SafeQueue<AVFrame*>  video_queue_;
-    SafeQueue<AVFrame*>  audio_queue_;
+    // ---- 队列体系 ----
+    SafeQueue<AVPacket*> video_packet_queue_;                                           // 视频压缩包队列
+    SafeQueue<AVPacket*> audio_packet_queue_;                                           // 音频压缩包队列
+    SafeQueue<AVFrame*>  video_frame_queue_;                                            // 视频帧队列
+    SafeQueue<AVFrame*>  audio_frame_queue_;                                            // 音频帧队列
 
-    Reader  reader_{ packet_queue_ };
-    Decoder decoder_{ packet_queue_, video_queue_, audio_queue_ };
+    // ---- 核心对象 ----
+    Reader        reader_{ video_packet_queue_, audio_packet_queue_ };
+    VideoDecoder  video_decoder_{ video_packet_queue_, video_frame_queue_ };
+    AudioDecoder  audio_decoder_{ audio_packet_queue_, audio_frame_queue_ };
 };

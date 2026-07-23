@@ -16,6 +16,16 @@ public:
     SafeQueue(const SafeQueue&) = delete;
     SafeQueue& operator=(const SafeQueue&) = delete;
 
+    // 有上限的阻塞 push（队列满时等待，适用于帧队列）
+    void PushMax(T item, size_t max_size)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock, [this, max_size] { return queue_.size() < max_size || stopped_; });
+        if (stopped_) return;
+        queue_.push(std::move(item));
+        cv_.notify_one();
+    }
+
     // 生产者调用
     void Push(T item)
     {
@@ -35,6 +45,7 @@ public:
 
         T item = std::move(queue_.front());
         queue_.pop();
+        cv_.notify_one();
         return item;
     }
 
@@ -45,6 +56,7 @@ public:
         if (queue_.empty()) return false;
         item = std::move(queue_.front());
         queue_.pop();
+        cv_.notify_one();
         return true;
     }
 
