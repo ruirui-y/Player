@@ -272,6 +272,71 @@ int FFmpegDecoder::ReadFrame(AVFrame* frame)
     }
 }
 
+// ---- 统一读包入口 ----
+// DecodeLoop 只调用这一个函数，自动分拣音视频
+// output_frame:    视频帧就绪时有效
+// output_audio_pkt:音频包就绪时有效（调用者负责 av_packet_free）
+ReadResult FFmpegDecoder::ReadNext(
+    AVFrame* output_frame, AVPacket* output_audio_pkt)
+{
+    if (!codec_ctx_ || !fmt_ctx_) return ReadResult::ERR;
+
+    // ---- 第一步：先尝试收视频帧（解码器内部可能有缓存帧） ----
+    int ret = avcodec_receive_frame(codec_ctx_, output_frame);
+    if (ret == 0) return ReadResult::VIDEO_FRAME;
+    if (ret == AVERROR_EOF) return ReadResult::EOF_REACHED;
+
+    // ---- 第二步：收不到 → 读包 ----
+    while (ret == AVERROR(EAGAIN))
+    {
+        AVPacket* pkt = av_packet_alloc();
+        int read_ret = av_read_frame(fmt_ctx_, pkt);
+
+        if (read_ret < 0)
+        {
+            // 文件读完了，flush 解码器
+            av_packet_free(&pkt);
+            avcodec_send_packet(codec_ctx_, nullptr);
+            break;
+        }
+
+        // ---- 是视频包 → 喂给解码器 ----
+        if (pkt->stream_index == video_stream_idx_)
+        {
+            int send_ret = avcodec_send_packet(codec_ctx_, pkt);
+            av_packet_free(&pkt);
+
+            if (send_ret >= 0 || send_ret == AVERROR(EAGAIN))
+            {
+                ret = avcodec_receive_frame(codec_ctx_, output_frame);
+                if (ret == 0) return ReadResult::VIDEO_FRAME;
+                if (ret == AVERROR_EOF) return ReadResult::EOF_REACHED;
+                // EAGAIN → 继续循环读包
+            }
+        }
+        // ---- 是音频包 → 通过参数返回 ----
+        else if (pkt->stream_index == audio_stream_idx_ && output_audio_pkt)
+        {
+            av_packet_move_ref(output_audio_pkt, pkt);
+            av_packet_free(&pkt);
+            return ReadResult::AUDIO_PACKET;
+        }
+        else
+        {
+            // 其他包（字幕等）→ 丢弃
+            av_packet_free(&pkt);
+        }
+    }
+
+    // ---- 第三步：flush 阶段 ----
+    while (true)
+    {
+        ret = avcodec_receive_frame(codec_ctx_, output_frame);
+        if (ret == 0) return ReadResult::VIDEO_FRAME;
+        return ReadResult::EOF_REACHED;
+    }
+}
+
 // 跳转到指定毫秒位置
 bool FFmpegDecoder::Seek(qint64 pos_ms)
 {

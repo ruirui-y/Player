@@ -13,18 +13,27 @@ struct AVBufferRef;         // FFmpeg 硬解设备上下文（前向声明）
 struct ID3D11Device;        // DirectX11 设备（前向声明）
 struct AVPacket;            // FFmpeg 压缩包（前向声明）
 
+// ---- 统一读包入口 ----
+enum class ReadResult
+{
+    VIDEO_FRAME,                // 视频帧就绪，output_frame 有效
+    AUDIO_PACKET,               // 音频包就绪，output_audio_pkt 有效
+    EOF_REACHED,                // 文件读完了
+    ERR                         // 出错
+};
 
 class FFmpegDecoder
 {
 public:
     FFmpegDecoder();
-    ~FFmpegDecoder();
+    ~FFmpegDecoder(); 
 
     bool OpenFile(const QString& path,
         bool try_hardware = false);                                                 // 打开文件，true=尝试硬解
     ID3D11Device* GetD3D11Device() const;                                           // 返回解码器内部的 ID3D11Device*
     void Close();                                                                   // 关闭文件，释放所有 FFmpeg 资源
 
+    ReadResult ReadNext(AVFrame* output_frame, AVPacket* output_audio_pkt);         // 调用者负责 output_audio_pkt 的 free
     bool Seek(qint64 pos_ms);                                                       // 跳转到指定毫秒
     void FlushBuffers();                                                            // 清空解码器缓存（seek 后必须调用）
 
