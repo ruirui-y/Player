@@ -41,6 +41,8 @@ public:
     bool IsPlaying() const { return playing_; }
     bool IsPaused() const { return paused_; }
 
+    bool FeedFrame(AVFrame* frame);                                             // 接收已解码的音频帧（Decoder 线程调用）
+
 signals:
     void SigFinished();                                                         // 音频播放完毕
 

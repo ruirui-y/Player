@@ -220,13 +220,43 @@ void AudioRenderer::FeedPcmData(const QByteArray& pcm_data)
 // 获取当前音频时钟（毫秒），用于音画同步
 double AudioRenderer::GetClock() const
 {
-    if (!playing_ || paused_) return audio_clock_;
-
-    // 更精确的时钟计算：减去 QAudioSink 内部已处理但尚未播放的缓冲区
     if (audio_sink_)
     {
-        qint64 buffer_us = audio_sink_->processedUSecs();
-        return audio_clock_ - (buffer_us / 1000.0);
+        qint64 played_us = audio_sink_->processedUSecs();
+        return std::max(0.0, played_us / 1000.0);  // ← 确保不为负数
     }
     return audio_clock_;
+}
+
+// ---- 接收已解码的音频帧，重采样后播放 ----
+// Decoder 已经把压缩包解成了 AVFrame（PCM 数据）
+// 这里只需要重采样 + 喂给音频设备，不需要再次 avcodec_send_packet
+bool AudioRenderer::FeedFrame(AVFrame* frame)
+{
+    if (!frame || !swr_ctx_) return false;
+
+    // ---- 第一步：重采样为 S16 格式（QAudioOutput 要求的格式） ----
+    int dst_nb_samples = av_rescale_rnd(
+        swr_get_delay(swr_ctx_, frame->sample_rate) + frame->nb_samples,
+        sample_rate_, frame->sample_rate, AV_ROUND_UP);
+
+    QByteArray pcm_data;
+    pcm_data.resize(dst_nb_samples * 2 * 2);  // S16 双声道：每个采样 2 字节 × 2 声道
+
+    uint8_t* dst[] = { reinterpret_cast<uint8_t*>(pcm_data.data()) };
+
+    int ret = swr_convert(swr_ctx_,
+        dst, dst_nb_samples,
+        const_cast<const uint8_t**>(frame->data), frame->nb_samples);
+
+    if (ret < 0) return false;
+
+    int actual_size = av_samples_get_buffer_size(
+        nullptr, 2, ret, AV_SAMPLE_FMT_S16, 1);
+
+    pcm_data.resize(actual_size);
+
+    // ---- 第二步：喂给音频设备 ----
+    FeedPcmData(pcm_data);
+    return true;
 }
