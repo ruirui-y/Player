@@ -102,12 +102,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Core\AudioRenderer.cpp" />
     <ClCompile Include="Core\FFmpegDecoder.cpp" />
     <ClCompile Include="Core\FFmpegPlayer.cpp" />
     <ClCompile Include="Core\D3D11Pipeline.cpp" />
     <ClCompile Include="Core\Nv12GpuUploader.cpp" />
     <ClCompile Include="Core\SoftwareRenderer.cpp" />
+    <ClCompile Include="Core\VideoRenderer.cpp" />
+    <ClCompile Include="Core\Reader.cpp" />
+    <ClCompile Include="Core\Decoder.cpp" />
     <ClCompile Include="TCP\TcpServer.cpp" />
+    <ClCompile Include="Thread\WorkerThread.cpp" />
     <QtRcc Include="Player.qrc" />
     <QtUic Include="Player.ui" />
     <QtMoc Include="MainUI\MainWindow.h" />
@@ -118,9 +123,15 @@
     <QtMoc Include="TCP\TcpServer.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Core\SafeQueue.h" />
+    <ClInclude Include="Core\Reader.h" />
+    <ClInclude Include="Core\Decoder.h" />
+    <QtMoc Include="Thread\WorkerThread.h" />
+    <QtMoc Include="Core\AudioRenderer.h" />
     <ClInclude Include="Core\FFmpegDecoder.h" />
     <ClInclude Include="Core\D3D11Pipeline.h" />
     <ClInclude Include="Core\Nv12GpuUploader.h" />
+    <QtMoc Include="Core\VideoRenderer.h" />
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="Core\SoftwareRenderer.h" />

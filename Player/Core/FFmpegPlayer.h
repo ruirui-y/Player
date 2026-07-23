@@ -5,11 +5,14 @@
 #include <QTimer>
 #include <atomic>
 #include <thread>
+#include "SafeQueue.h"
+#include "Reader.h"
+#include "Decoder.h"
 
-class FFmpegDecoder;        // 解码层（前向声明）
 class VideoRenderer;        // 视频渲染层（前向声明）
 class AudioRenderer;        // 音频渲染层（前向声明）
 
+struct AVPacket;
 struct AVFrame;
 
 class FFmpegPlayer : public QObject
@@ -43,7 +46,6 @@ signals:
 private:
     void DecodeLoop();                                                                  // 解码线程主循环
 
-    FFmpegDecoder* decoder_{ nullptr };                                                 // 解码层
     VideoRenderer* video_renderer_{ nullptr };                                          // 视频渲染层
     AudioRenderer* audio_renderer_{ nullptr };                                          // 音频渲染层
 
@@ -54,4 +56,12 @@ private:
     std::atomic<bool>   paused_{ false };                                               // 已暂停
     std::atomic<qint64> current_pts_ms_{ 0 };                                           // 当前播放位置（毫秒）
     qint64              duration_ms_{ 0 };                                              // 视频总时长
+
+    // 队列
+    SafeQueue<AVPacket*> packet_queue_;
+    SafeQueue<AVFrame*>  video_queue_;
+    SafeQueue<AVFrame*>  audio_queue_;
+
+    Reader  reader_{ packet_queue_ };
+    Decoder decoder_{ packet_queue_, video_queue_, audio_queue_ };
 };

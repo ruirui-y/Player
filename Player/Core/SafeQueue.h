@@ -1,0 +1,78 @@
+﻿#ifndef SAFEQUEUE_H
+#define SAFEQUEUE_H
+
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+
+template<typename T>
+class SafeQueue
+{
+public:
+    SafeQueue() = default;
+    ~SafeQueue() = default;
+
+    // 禁止拷贝
+    SafeQueue(const SafeQueue&) = delete;
+    SafeQueue& operator=(const SafeQueue&) = delete;
+
+    // 生产者调用
+    void Push(T item)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        queue_.push(std::move(item));
+        cv_.notify_one();
+    }
+
+    // 消费者调用，阻塞直到有数据或队列停止
+    T Pop()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock, [this] { return !queue_.empty() || stopped_; });
+
+        if (stopped_ && queue_.empty())
+            return nullptr;     // 哨兵：结束
+
+        T item = std::move(queue_.front());
+        queue_.pop();
+        return item;
+    }
+
+    // 非阻塞弹出
+    bool TryPop(T& item)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (queue_.empty()) return false;
+        item = std::move(queue_.front());
+        queue_.pop();
+        return true;
+    }
+
+    size_t Size()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return queue_.size();
+    }
+
+    void Stop()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stopped_ = true;
+        cv_.notify_all();
+    }
+
+    void Clear()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        while (!queue_.empty())
+            queue_.pop();
+    }
+
+private:
+    std::queue<T> queue_;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool stopped_{ false };
+};
+
+#endif // SAFEQUEUE_H

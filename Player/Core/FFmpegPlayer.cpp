@@ -1,5 +1,4 @@
 ﻿#include "FFmpegPlayer.h"
-#include "FFmpegDecoder.h"
 #include "VideoRenderer.h"
 #include "AudioRenderer.h"
 #include <QDebug>
@@ -8,15 +7,15 @@
 extern "C"
 {
 #include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 }
 
 // ---- 构造 ----
-// 创建解码层 + 视频渲染层 + 音频渲染层
+// 创建视频渲染层 + 音频渲染层
 FFmpegPlayer::FFmpegPlayer(QObject* parent)
     : QObject(parent)
 {
-    decoder_ = new FFmpegDecoder();
     video_renderer_ = new VideoRenderer(this);
     audio_renderer_ = new AudioRenderer(this);
 
@@ -25,50 +24,58 @@ FFmpegPlayer::FFmpegPlayer(QObject* parent)
         this, &FFmpegPlayer::SigFrameReady);
 }
 
+// ---- 析构 ----
 FFmpegPlayer::~FFmpegPlayer()
 {
     Close();
-    delete decoder_;
     delete video_renderer_;
     delete audio_renderer_;
 }
 
+// ---- 设置渲染窗口句柄 ----
 void FFmpegPlayer::SetVideoHwnd(HWND hwnd)
 {
     hwnd_ = hwnd;
     video_renderer_->SetHwnd(hwnd);
 }
 
-// 打开文件：尝试硬解，如果失败回退软解
+// ---- 打开文件：Reader 解封装 + Decoder 初始化 ----
 bool FFmpegPlayer::OpenFile(const QString& path)
 {
-    Stop();
-    qDebug() << "\n[FFmpegPlayer] === 开始加载文件 ===";
+    Close();
 
-    // ---- 第一步：尝试 D3D11 硬解打开 ----
-    if (!decoder_->OpenFile(path, true))
+    // ---- 第一步：Reader 打开文件（解封装） ----
+    if (!reader_.Open(path))
     {
-        qDebug() << "[FFmpegPlayer] 硬解启动失败，尝试强制软解模式回退";
-        decoder_->Close();
-        if (!decoder_->OpenFile(path, false))
+        emit SigError("OpenFile failed");
+        return false;
+    }
+
+    // ---- 第二步：取视频宽高和时长 ----
+    duration_ms_ = reader_.FormatContext()->duration * 1000 / AV_TIME_BASE;
+    AVCodecParameters* video_par =
+        reader_.FormatContext()->streams[reader_.VideoStreamIndex()]->codecpar;
+    int w = video_par->width;
+    int h = video_par->height;
+
+    qDebug() << "[FFmpegPlayer] 视频信息: " << w << "x" << h
+        << ", 时长:" << duration_ms_ << "ms";
+
+    // ---- 第三步：尝试硬解打开视频解码器 ----
+    if (!decoder_.OpenVideo(video_par, true))
+    {
+        qDebug() << "[FFmpegPlayer] 硬解失败，尝试软解";
+        if (!decoder_.OpenVideo(video_par, false))
         {
-            qDebug() << "[FFmpegPlayer] 文件打开彻底失败";
-            emit SigError("OpenFile failed");
+            emit SigError("Open video decoder failed");
             return false;
         }
     }
 
-    duration_ms_ = decoder_->GetDuration();
-    int w = decoder_->GetWidth();
-    int h = decoder_->GetHeight();
-
-    qDebug() << "[FFmpegPlayer] 视频信息获取成功 -> 尺寸:" << w << "x" << h
-        << ", 时长:" << duration_ms_ << "ms";
-
-    // ---- 第二步：如果硬解成功，初始化 GPU 渲染管线 ----
-    if (decoder_->IsHardwareDecoding())
+    // ---- 第四步：硬解成功后初始化 GPU 渲染管线 ----
+    if (decoder_.IsHardwareDecoding())
     {
-        ID3D11Device* device = decoder_->GetD3D11Device();
+        ID3D11Device* device = decoder_.GetD3D11Device();
         if (device)
         {
             if (!video_renderer_->Init(device, w, h))
@@ -78,44 +85,49 @@ bool FFmpegPlayer::OpenFile(const QString& path)
         }
     }
 
-    // ---- 第三步：初始化音频解码器 ----
-    AVCodecParameters* audio_par = decoder_->GetAudioCodecPar();
-    if (audio_par)
+    // ---- 第五步：打开音频解码器 + AudioRenderer ----
+    if (reader_.AudioStreamIndex() >= 0)
     {
-        bool audio_ok = audio_renderer_->Open(audio_par);
-        qDebug() << "[FFmpegPlayer] 音频解码器初始化:" << (audio_ok ? "成功" : "失败");
+        AVCodecParameters* audio_par = reader_.AudioCodecParameters();
+        if (audio_par)
+        {
+            decoder_.OpenAudio(audio_par);
+            audio_renderer_->Open(audio_par);
+        }
     }
 
-    qDebug() << "[FFmpegPlayer] === 文件加载完毕，等待 Play指令 ===";
+    // ---- 第六步：告诉 Decoder 音视频流索引 ----
+    decoder_.SetStreamIndex(reader_.VideoStreamIndex(), reader_.AudioStreamIndex());
+
+    qDebug() << "[FFmpegPlayer] === 文件加载完毕 ===";
     emit SigLoaded(duration_ms_);
     return true;
 }
 
+// ---- 开始/恢复播放 ----
 void FFmpegPlayer::Play()
 {
-    if (!decoder_->GetFormatContext()) { emit SigError("no file opened"); return; }
     if (playing_)
     {
-        if (paused_)
-        {
-            qDebug() << "[FFmpegPlayer] 恢复播放";
-            paused_ = false;
-            emit SigPlayState("playing");
-        }
+        if (paused_) { paused_ = false; emit SigPlayState("playing"); }
         return;
     }
 
-    qDebug() << "[FFmpegPlayer] 发起启动解码线程";
-
-    // 启动音频播放
     audio_renderer_->Start();
 
+    // 先启动消费者
     playing_ = true;
     paused_ = false;
     decode_thread_ = std::thread(&FFmpegPlayer::DecodeLoop, this);
+
+    // 再启动生产者
+    reader_.Start();
+    decoder_.Start();
+
     emit SigPlayState("playing");
 }
 
+// ---- 暂停 ----
 void FFmpegPlayer::Pause()
 {
     if (!playing_) return;
@@ -125,102 +137,109 @@ void FFmpegPlayer::Pause()
     emit SigPlayState("paused");
 }
 
+// ---- 停止 ----
 void FFmpegPlayer::Stop()
 {
     if (!playing_) return;
-    qDebug() << "[FFmpegPlayer] 停止播放并销毁解码线程";
+    qDebug() << "[FFmpegPlayer] 停止播放";
     playing_ = false;
-    paused_ = false;
+
+    // 停止读写和解码线程
+    reader_.Stop();
+    decoder_.Stop();
 
     if (decode_thread_.joinable()) decode_thread_.join();
 
-    decoder_->FlushBuffers();
     audio_renderer_->Stop();
     current_pts_ms_ = 0;
     emit SigPlayState("stopped");
 }
 
+// ---- 关闭全部资源 ----
 void FFmpegPlayer::Close()
 {
     qDebug() << "[FFmpegPlayer] 关闭播放器引擎";
     Stop();
-    decoder_->Close();
+    reader_.Stop();
+    decoder_.Stop();
     video_renderer_->Release();
     audio_renderer_->Close();
     duration_ms_ = 0;
 }
 
+// ---- getter ----
 qint64 FFmpegPlayer::GetPosition() const { return current_pts_ms_.load(); }
 qint64 FFmpegPlayer::GetDuration() const { return duration_ms_; }
 bool FFmpegPlayer::IsPlaying() const { return playing_.load() && !paused_.load(); }
 bool FFmpegPlayer::IsPaused() const { return paused_.load(); }
 
+// ---- 解码线程主循环 ----
+// Reader 线程负责读压缩包 → Decoder 线程负责解压缩
+// 本线程（DecodeLoop）只负责：从视频队列取帧 → 同步 → 渲染
 void FFmpegPlayer::DecodeLoop()
 {
-    AVFrame* frame = av_frame_alloc();
-    if (!frame) return;
-
-    AVFormatContext* fmt = decoder_->GetFormatContext();
-    AVRational time_base = decoder_->GetVideoTimeBase();
-    int frame_count = 0;
-
-    double fps = decoder_->GetFrameRate();
-    int target_frame_delay_ms = (fps > 0) ? (int)(1000.0 / fps) : 33;
+    qDebug() << "[FFmpegPlayer] DecodeLoop 启动";
+    auto start_time = std::chrono::steady_clock::now();
 
     while (playing_)
     {
-        if (paused_)
+        if (paused_) 
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
 
-        auto start_time = std::chrono::steady_clock::now();
-
-        // ================================================================
-        // 处理音频：把当前积压的音频包全部解码并喂给播放器
-        // ================================================================
-        if (audio_renderer_->IsOpened())
+        // 处理音频
         {
-            while (AVPacket* audio_pkt = decoder_->ReadAudioPacket())
+            AVFrame* af = nullptr;
+            int n = 0;
+            while (audio_queue_.TryPop(af) && n < 5)
             {
-                audio_renderer_->DecodePacket(audio_pkt);
-                av_packet_free(&audio_pkt);
+                audio_renderer_->FeedFrame(af);
+                av_frame_free(&af);
+                n++;
             }
         }
 
-        // ================================================================
-        // 处理视频
-        // ================================================================
-        av_frame_unref(frame);
-        int ret = decoder_->ReadFrame(frame);
+        // 取视频帧
+        AVFrame* video_frame = video_queue_.Pop();
+        if (!video_frame) break;
 
-        if (ret < 0)
+        // 算 PTS（毫秒）
+        qint64 pts_ms = 0;
+        if (video_frame->pts != AV_NOPTS_VALUE)
         {
-            if (ret == AVERROR_EOF) emit SigFinished();
-            break;
-        }
-
-        frame_count++;
-
-        if (frame->pts != AV_NOPTS_VALUE && fmt)
-        {
-            qint64 pts_ms = static_cast<qint64>(
-                frame->pts * av_q2d(time_base) * 1000.0);
+            AVRational tb = reader_.FormatContext()
+                ->streams[reader_.VideoStreamIndex()]->time_base;
+            pts_ms = static_cast<qint64>(video_frame->pts * av_q2d(tb) * 1000.0);
             current_pts_ms_ = pts_ms;
         }
 
-        // ---- 渲染视频帧 ----
-        video_renderer_->Render(frame);
+        // ---- 按 PTS 等时间 ----
+        if (pts_ms > 0)
+        {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - start_time).count();
 
-        // ---- 帧率控制 ----
-        auto end_time = std::chrono::steady_clock::now();
-        int elapsed_ms = std::chrono::duration_cast<
-            std::chrono::milliseconds>(end_time - start_time).count();
-        int sleep_time = target_frame_delay_ms - elapsed_ms;
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(sleep_time > 0 ? sleep_time : 1));
+            qint64 wait_ms = pts_ms - elapsed;
+            if (wait_ms > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
+            }
+        }
+
+        // 渲染
+        video_renderer_->Render(video_frame);
+        av_frame_free(&video_frame);
     }
 
-    av_frame_free(&frame);
+    // 清理
+    {
+        AVFrame* f = nullptr;
+        while (video_queue_.TryPop(f)) av_frame_free(&f);
+        while (audio_queue_.TryPop(f)) av_frame_free(&f);
+    }
+
+    emit SigFinished();
 }
