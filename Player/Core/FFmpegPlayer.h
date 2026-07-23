@@ -9,6 +9,7 @@
 #include "Reader.h"
 #include "VideoDecoder.h"
 #include "AudioDecoder.h"
+#include "ClockUtil.h"
 
 class VideoRenderer;        // 视频渲染层（前向声明）
 class AudioRenderer;        // 音频渲染层（前向声明）
@@ -57,6 +58,14 @@ private:
     std::atomic<bool>   paused_{ false };                                               // 已暂停
     std::atomic<qint64> current_pts_ms_{ 0 };                                           // 当前播放位置（毫秒）
     qint64              duration_ms_{ 0 };                                              // 视频总时长
+
+    // ---- 音视频同步相关 ----
+    double frame_timer_ms_{ 0.0 };                                                      // frame_timer：上一帧应该显示的时间点（毫秒）
+    double video_clock_ms_{ 0.0 };                                                      // vidclk：当前视频帧 PTS（毫秒）
+    double last_frame_pts_ms_{ 0.0 };                                                   // 上一帧 PTS（毫秒）
+    double pause_start_time_ms_{ 0.0 };                                                 // 暂停时的系统时间（毫秒），恢复时补偿 frame_timer
+    int    frame_drops_early_{ 0 };                                                     // 早期丢帧计数
+    int    frame_drops_late_{ 0 };                                                      // 晚期丢帧计数
 
     // ---- 队列体系 ----
     SafeQueue<AVPacket*> video_packet_queue_;                                           // 视频压缩包队列

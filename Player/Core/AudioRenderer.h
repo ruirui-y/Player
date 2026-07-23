@@ -5,7 +5,7 @@
 #include <QByteArray>
 #include <QMutex>
 #include <QQueue>
-
+#include <QFile>
 #include <QAudioOutput>
 #include <atomic>
 
@@ -34,7 +34,10 @@ public:
     void Close();                                                               // 关闭释放
     void Flush();                                                               // 清空缓存
 
+    bool CanAcceptFrame() const;                                                // 声卡能否接受一帧音频数据？
+
     double GetClock() const;                                                    // 当前音频时钟（毫秒）
+    double GetBytesPerSec() const { return (double)sample_rate_ * 2 * 2; }      // 每秒输出字节数
 
     bool IsOpened() const { return codec_ctx_ != nullptr; }
     bool IsPlaying() const { return playing_; }
@@ -63,6 +66,10 @@ private:
     double          audio_clock_{ 0.0 };                                        // 音频时钟（毫秒）
     int             sample_rate_{ 48000 };                                      // 重采样目标采样率
     qint64          total_written_{ 0 };                                        // 已写入音频设备的总字节数
+    QFile debug_wav_file_;     // 调试音频文件
+
+    bool can_accept_frame_{ false };                                            // 标记
+    int  expected_frame_bytes_{ 4096 };                                         // 一帧 S16 立体声 ≈ 1024*2*2
 };
 
 #endif // AUDIORENDERER_H

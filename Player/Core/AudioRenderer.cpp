@@ -87,6 +87,11 @@ void AudioRenderer::Start()
     audio_sink_ = new QAudioOutput(format, nullptr);
     audio_io_ = audio_sink_->start();
 
+    // ---- [调试] 打开 WAV 文件用于写入原始 PCM ----
+    debug_wav_file_.setFileName("debug_audio.pcm");
+    debug_wav_file_.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    qDebug() << "[AudioRenderer] 调试文件已打开";
+
     playing_ = true;
     paused_ = false;
     total_written_ = 0;
@@ -118,6 +123,9 @@ void AudioRenderer::Stop()
         audio_sink_ = nullptr;
         audio_io_ = nullptr;
     }
+
+    if (debug_wav_file_.isOpen())
+        debug_wav_file_.close();
 }
 
 void AudioRenderer::Close()
@@ -151,10 +159,22 @@ void AudioRenderer::Flush()
     pcm_queue_.clear();
 }
 
+bool AudioRenderer::CanAcceptFrame() const
+{
+    if (!audio_sink_) return false;
+    // 一帧 S16 立体声最大约 4096 字节（1024 样本 × 2 声道 × 2 字节）
+    return audio_sink_->bytesFree() >= 4096;
+}
+
 // 把 PCM 数据写入音频设备
 void AudioRenderer::FeedPcmData(const QByteArray& pcm_data)
 {
     if (!audio_io_ || pcm_data.isEmpty()) return;
+
+    qint64 free = audio_sink_->bytesFree();
+    can_accept_frame_ = (free >= expected_frame_bytes_);
+
+    if (!can_accept_frame_) return;
 
     qint64 written = audio_io_->write(pcm_data);
     if (written > 0)
@@ -201,6 +221,11 @@ bool AudioRenderer::FeedFrame(AVFrame* frame)
         nullptr, 2, ret, AV_SAMPLE_FMT_S16, 1);
 
     pcm_data.resize(actual_size);
+
+    if (debug_wav_file_.isOpen())
+    {
+        debug_wav_file_.write(pcm_data);
+    }
 
     // ---- 第二步：喂给音频设备 ----
     FeedPcmData(pcm_data);
