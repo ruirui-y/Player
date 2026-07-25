@@ -102,17 +102,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Core\AudioDecoder.cpp" />
     <ClCompile Include="Core\AudioRenderer.cpp" />
-    <ClCompile Include="Core\FFmpegDecoder.cpp" />
     <ClCompile Include="Core\FFmpegPlayer.cpp" />
     <ClCompile Include="Core\D3D11Pipeline.cpp" />
     <ClCompile Include="Core\Nv12GpuUploader.cpp" />
     <ClCompile Include="Core\SoftwareRenderer.cpp" />
     <ClCompile Include="Core\VideoRenderer.cpp" />
     <ClCompile Include="Core\Reader.cpp" />
-    <ClCompile Include="Core\Decoder.cpp" />
     <ClCompile Include="TCP\TcpServer.cpp" />
     <ClCompile Include="Thread\WorkerThread.cpp" />
+    <ClCompile Include="Core\VideoDecoder.cpp" />
     <QtRcc Include="Player.qrc" />
     <QtUic Include="Player.ui" />
     <QtMoc Include="MainUI\MainWindow.h" />
@@ -123,12 +123,13 @@
     <QtMoc Include="TCP\TcpServer.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Core\AudioDecoder.h" />
+    <ClInclude Include="Core\ClockUtil.h" />
     <ClInclude Include="Core\SafeQueue.h" />
     <ClInclude Include="Core\Reader.h" />
-    <ClInclude Include="Core\Decoder.h" />
+    <ClInclude Include="Core\VideoDecoder.h" />
     <QtMoc Include="Thread\WorkerThread.h" />
     <QtMoc Include="Core\AudioRenderer.h" />
-    <ClInclude Include="Core\FFmpegDecoder.h" />
     <ClInclude Include="Core\D3D11Pipeline.h" />
     <ClInclude Include="Core\Nv12GpuUploader.h" />
     <QtMoc Include="Core\VideoRenderer.h" />
@@ -141,11 +142,15 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Notes\8k30帧.md" />
+    <None Include="Notes\AI边缘检测.md" />
     <None Include="Notes\从 CPU 到 GPU 的演进总结.md" />
     <None Include="Notes\大纲.md" />
     <None Include="Notes\播放器完整流程拆解.md" />
     <None Include="Notes\补齐基础知识-自学.md" />
+    <None Include="Notes\视频帧渲染完整流程.md" />
     <None Include="Notes\软解码.md" />
+    <None Include="Notes\音视频同步.md" />
+    <None Include="Notes\音视频同步踩坑.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">
