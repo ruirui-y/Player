@@ -217,21 +217,7 @@ void FFmpegPlayer::DecodeLoop()
     }
     // if (!playing_) goto cleanup;
 
-    // ---- 第三步：预喂音频，让声卡跑起来 ----
-    //if (has_audio)
-    //{
-    //    AVFrame* af = nullptr;
-    //    int fed = 0;
-    //    while (fed < 10 && audio_frame_queue_.TryPop(af))
-    //    {
-    //        audio_renderer_->FeedFrame(af);
-    //        av_frame_free(&af);
-    //        fed++;
-    //    }
-    //    qDebug() << "[FFmpegPlayer] 预喂" << fed << "帧音频";
-    //}
-
-    // ---- 第四步：初始化 ----
+    // ---- 第三步：初始化 ----
     frame_timer_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();                                   // 当前系统时间
     qDebug() << "[FFmpegPlayer] DecodeLoop 开始，当前系统时间：" << frame_timer_ms_;
@@ -275,19 +261,26 @@ void FFmpegPlayer::DecodeLoop()
         // ---- 计算视频帧 PTS（秒→毫秒） ----
         double pts_sec = 0.0;
         if (video_frame->pts != AV_NOPTS_VALUE)
-            pts_sec = video_frame->pts * av_q2d(video_tb);
+            pts_sec = video_frame->pts * av_q2d(video_tb);                                              // 这一帧应该被显示的时间点 (秒)
         double pts_ms = pts_sec * 1000.0;
         current_pts_ms_ = static_cast<qint64>(pts_ms);
+        // qDebug() << "[FFmpegPlayer] 解码视频帧，PTS：" << pts_ms << "ms" << " pts_sec: " << pts_sec;
 
         // ---- 读音频时钟 ----
         double audio_clk_sec = 0.0;
         if (has_audio)
-            audio_clk_sec = audio_renderer_->GetClock() / 1000.0;
-        double diff_sec = pts_sec - audio_clk_sec;
+            audio_clk_sec = audio_renderer_->GetClock() / 1000.0;                                       // 当前音频播放时间点 (秒)
+        
+        // diff_sec = 0 表示视频帧与音频播放时间点完全同步
+        // diff_sec < 0 表示视频帧比音频播放时间点早
+        // diff_sec > 0 表示视频帧比音频播放时间点晚
+        double diff_sec = pts_sec - audio_clk_sec;                                                      // 当前视频帧与音频播放时间的差值 (秒)
+        // qDebug() << "diff_sec =  " << diff_sec << "s";
 
         // ---- 早期丢帧 ----
         if (has_audio && diff_sec < -0.5 && video_frame_queue_.Size() > 1)
         {
+            qDebug() << "视频帧比音频慢 通过丢帧加速追赶";
             frame_drops_early_++;
             av_frame_free(&video_frame);
             continue;
@@ -330,6 +323,7 @@ void FFmpegPlayer::DecodeLoop()
         // ---- 晚期丢帧 ----
         if (has_audio && diff_sec < -0.2 && video_frame_queue_.Size() > 1)
         {
+            qDebug() << "视频帧比音频慢 通过丢帧加速追赶";
             frame_drops_late_++;
             av_frame_free(&video_frame);
             continue;
@@ -339,21 +333,21 @@ void FFmpegPlayer::DecodeLoop()
         video_clock_ms_ = pts_ms;
         last_frame_pts_ms_ = pts_ms;
 
-        // ---- [调试] 打印前 5 秒的同步数据 ----
-        double elapsed = now_ms - decode_start_time_ms;
-        if (elapsed < 5000.0)
-        {
-            qDebug().noquote()
-                << QString("[Sync]  %1  %2  %3  %4  %5  %6  e=%7 l=%8")
-                .arg(pts_ms, 8, 'f', 1)
-                .arg(audio_clk_sec * 1000.0, 8, 'f', 1)
-                .arg(diff_sec * 1000.0, 8, 'f', 1)
-                .arg(delay_sec * 1000.0, 8, 'f', 1)
-                .arg(frame_timer_ms_, 8, 'f', 1)
-                .arg(now_ms - decode_start_time_ms, 8, 'f', 1)
-                .arg(frame_drops_early_)
-                .arg(frame_drops_late_);
-        }
+        //// ---- [调试] 打印前 5 秒的同步数据 ----
+        //double elapsed = now_ms - decode_start_time_ms;
+        //if (elapsed < 5000.0)
+        //{
+        //    qDebug().noquote()
+        //        << QString("[Sync]  %1  %2  %3  %4  %5  %6  e=%7 l=%8")
+        //        .arg(pts_ms, 8, 'f', 1)
+        //        .arg(audio_clk_sec * 1000.0, 8, 'f', 1)
+        //        .arg(diff_sec * 1000.0, 8, 'f', 1)
+        //        .arg(delay_sec * 1000.0, 8, 'f', 1)
+        //        .arg(frame_timer_ms_, 8, 'f', 1)
+        //        .arg(now_ms - decode_start_time_ms, 8, 'f', 1)
+        //        .arg(frame_drops_early_)
+        //        .arg(frame_drops_late_);
+        //}
 
         // ---- 渲染 ----
         video_renderer_->Render(video_frame);

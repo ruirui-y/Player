@@ -66,10 +66,12 @@ private:
     double          audio_clock_{ 0.0 };                                        // 音频时钟（毫秒）
     int             sample_rate_{ 48000 };                                      // 重采样目标采样率
     qint64          total_written_{ 0 };                                        // 已写入音频设备的总字节数
-    QFile debug_wav_file_;     // 调试音频文件
+    QFile debug_wav_file_;                                                      // 调试音频文件
 
     bool can_accept_frame_{ false };                                            // 标记
     int  expected_frame_bytes_{ 4096 };                                         // 一帧 S16 立体声 ≈ 1024*2*2
+
+    int frame_bytes_{ 0 };                                                      // 缓存一帧 PCM 的大小（字节），第一帧后确定
 };
 
 #endif // AUDIORENDERER_H

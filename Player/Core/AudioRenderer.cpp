@@ -162,8 +162,7 @@ void AudioRenderer::Flush()
 bool AudioRenderer::CanAcceptFrame() const
 {
     if (!audio_sink_) return false;
-    // 一帧 S16 立体声最大约 4096 字节（1024 样本 × 2 声道 × 2 字节）
-    return audio_sink_->bytesFree() >= 4096;
+    return audio_sink_->bytesFree() >= frame_bytes_;
 }
 
 // 把 PCM 数据写入音频设备
@@ -200,6 +199,17 @@ double AudioRenderer::GetClock() const
 bool AudioRenderer::FeedFrame(AVFrame* frame)
 {
     if (!frame || !swr_ctx_) return false;
+
+    // 只计算一次，后续帧直接用缓存值
+    if (frame_bytes_ == 0)
+    {
+        int dst_nb_samples = av_rescale_rnd(
+            swr_get_delay(swr_ctx_, frame->sample_rate) + frame->nb_samples,
+            sample_rate_, frame->sample_rate, AV_ROUND_UP);
+        frame_bytes_ = av_samples_get_buffer_size(
+            nullptr, 2, dst_nb_samples, AV_SAMPLE_FMT_S16, 1);
+        qDebug() << "[AudioRenderer] 帧大小缓存:" << frame_bytes_ << "字节";
+    }
 
     // ---- 第一步：重采样为 S16 格式（QAudioOutput 要求的格式） ----
     int dst_nb_samples = av_rescale_rnd(
