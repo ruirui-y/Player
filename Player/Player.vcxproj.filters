@@ -73,6 +73,18 @@
     <ClCompile Include="Core\AudioDecoder.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MainUI\VideoWidget.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MainUI\ControlBar.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="PlayerApp.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MainUI\TitleBar.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="TCP\TcpServer.h">
@@ -91,6 +103,18 @@
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="Core\VideoRenderer.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="MainUI\VideoWidget.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="MainUI\ControlBar.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="PlayerApp.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="MainUI\TitleBar.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>
@@ -128,5 +152,9 @@
     <None Include="Notes\视频帧渲染完整流程.md" />
     <None Include="Notes\音视频同步.md" />
     <None Include="Notes\音视频同步踩坑.md" />
+    <None Include="Notes\ffplay完整流程分析.md" />
+    <None Include="Notes\基于ffplay的音视频同步改造.md" />
+    <None Include="QSS\style.qss" />
+    <None Include="Notes\MoonLight\Moonlight 学习笔记：从零实现低延迟桌面串流.md" />
   </ItemGroup>
 </Project>

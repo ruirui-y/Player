@@ -1,0 +1,87 @@
+﻿/* ===== MainWindow ===== */
+MainWindow {
+    background-color: black;
+}
+
+/* ===== VideoWidget ===== */
+VideoWidget {
+    background-color: black;
+}
+
+/* ===== ControlBar ===== */
+ControlBar {
+    background-color: #2d2d2d;
+}
+
+/* 播放/暂停按钮 */
+#PlayBtn {
+    background-color: #555;
+    color: white;
+    border: none;
+    border-radius: 4px;
+}
+#PlayBtn:hover {
+    background-color: #777;
+}
+
+/* 进度条 */
+#SeekBar::groove:horizontal {
+    height: 4px;
+    background: #555;
+}
+#SeekBar::handle:horizontal {
+    width: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
+    background: #fff;
+}
+#SeekBar::sub-page:horizontal {
+    background: #1a73e8;
+}
+
+/* 时间标签 */
+#TimeLabel {
+    color: #ccc;
+    font-size: 12px;
+}
+
+/* 音量滑块 */
+#VolSlider::groove:horizontal {
+    height: 4px;
+    background: #555;
+}
+#VolSlider::handle:horizontal {
+    width: 10px;
+    margin: -3px 0;
+    border-radius: 5px;
+    background: #fff;
+}
+#VolSlider::sub-page:horizontal {
+    background: #1a73e8;
+}
+
+/* ===== TitleBar 标题栏 ===== */
+#TitleBar {
+    background-color: #1a1a1a;
+}
+
+#TitleLabel {
+    color: #ccc;
+    font-size: 12px;
+    padding-left: 8px;
+}
+
+#TitleBtnMin, #TitleBtnMax, #TitleBtnClose {
+    background-color: transparent;
+    color: #888;
+    border: none;
+    font-size: 14px;
+}
+#TitleBtnMin:hover, #TitleBtnMax:hover {
+    color: #fff;
+    background-color: #444;
+}
+#TitleBtnClose:hover {
+    color: #fff;
+    background-color: #c42b2b;
+}

@@ -30,6 +30,7 @@ public:
     bool OpenFile(const QString& path);                                                 // 打开文件
     void Play();                                                                        // 开始/恢复播放
     void Pause();                                                                       // 暂停
+    void Seek(qint64 pts_ms);                                                           // 跳转到指定位置（毫秒）
     void Stop();                                                                        // 停止
     void Close();                                                                       // 关闭全部资源
 
@@ -37,6 +38,9 @@ public:
     qint64 GetDuration() const;                                                         // 总时长（毫秒）
     bool   IsPlaying() const;                                                           // 是否正在播放
     bool   IsPaused() const;                                                            // 是否暂停
+
+    void SetVolume(double volume);                                                      // 0.0 ~ 1.0
+    double GetVolume() const;
 
 signals:
     void SigLoaded(qint64 duration_ms);                                                 // 文件加载完成

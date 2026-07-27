@@ -34,6 +34,9 @@ public:
     void Close();                                                               // 关闭释放
     void Flush();                                                               // 清空缓存
 
+    void SetVolume(double volume);                                              // 0.0 ~ 1.0
+    double GetVolume() const;
+
     bool CanAcceptFrame() const;                                                // 声卡能否接受一帧音频数据？
 
     double GetClock() const;                                                    // 当前音频时钟（毫秒）

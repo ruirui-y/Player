@@ -109,6 +109,8 @@ void FFmpegPlayer::Play()
             double pause_duration = now_ms - pause_start_time_ms_;
             frame_timer_ms_ += pause_duration;
 
+            audio_renderer_->Resume();
+
             paused_ = false;
             emit SigPlayState("playing");
         }
@@ -138,6 +140,48 @@ void FFmpegPlayer::Pause()
         std::chrono::steady_clock::now().time_since_epoch()).count();
     audio_renderer_->Pause();
     emit SigPlayState("paused");
+}
+
+void FFmpegPlayer::Seek(qint64 pts_ms)
+{
+    if (!playing_) return;
+
+    // 1. 暂停渲染
+    paused_ = true;
+
+    // 2. 暂停声卡
+    audio_renderer_->Pause();
+
+    // 3. Reader 跳转
+    reader_.Seek(pts_ms);
+
+    // 4. 等待 Reader 完成跳转（同步等待 seek 被处理）
+    // Reader 的 ReadLoop 会检测 seek_target_ms_ 并执行 av_seek_frame
+    // 短暂等待确保 seek 生效
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    // 5. 清空解码器
+    video_decoder_.Flush();
+    audio_decoder_.Flush();
+
+    // 6. 清空帧队列
+    video_frame_queue_.Clear();
+    audio_frame_queue_.Clear();
+
+    // 7. 清空音频缓冲区
+    audio_renderer_->Flush();
+
+    // 8. 重置同步状态
+    frame_timer_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    last_frame_pts_ms_ = 0.0;
+    video_clock_ms_ = 0.0;
+    frame_drops_early_ = 0;
+    frame_drops_late_ = 0;
+
+    // 9. 恢复
+    paused_ = false;
+    audio_renderer_->Resume();
 }
 
 // ---- 停止 ----
@@ -172,10 +216,22 @@ void FFmpegPlayer::Close()
 }
 
 // ---- getter ----
-qint64 FFmpegPlayer::GetPosition() const { return current_pts_ms_.load(); }
+qint64 FFmpegPlayer::GetPosition() const
+{
+    // 有音频时优先使用音频时钟（processedUSecs），持续递增，更平稳
+    // 暂停时 processedUSecs 停在暂停时刻，恢复后继续递增
+    if (audio_renderer_ && audio_renderer_->IsOpened())
+    {
+        return static_cast<qint64>(audio_renderer_->GetClock());
+    }
+    // 无音频时回退到视频 PTS
+    return current_pts_ms_.load();
+}
 qint64 FFmpegPlayer::GetDuration() const { return duration_ms_; }
 bool FFmpegPlayer::IsPlaying() const { return playing_.load() && !paused_.load(); }
 bool FFmpegPlayer::IsPaused() const { return paused_.load(); }
+void FFmpegPlayer::SetVolume(double volume) { audio_renderer_->SetVolume(volume); }
+double FFmpegPlayer::GetVolume() const { return audio_renderer_->GetVolume(); }
 
 // ================================================================
 // ---- 渲染线程主循环（音视频同步核心） ----
@@ -193,7 +249,6 @@ void FFmpegPlayer::DecodeLoop()
     double frame_interval_ms = 1000.0 / fps;
     double max_frame_duration_ms = 1000.0;
     qDebug() << "[FFmpegPlayer] 视频帧率：" << fps << "fps" << ", 帧间隔：" << frame_interval_ms << "ms";
-
 
     // 获取视频 time_base
     AVRational video_tb = reader_.FormatContext()
@@ -226,8 +281,6 @@ void FFmpegPlayer::DecodeLoop()
     frame_drops_late_ = 0;
     last_frame_pts_ms_ = 0.0;
     video_clock_ms_ = 0.0;
-
-    qDebug().noquote() << "[Sync]  PTS(ms)  audclk(ms)  diff(ms)  delay(ms)  timer(ms)  drops";
 
     // ---- 第五步：主循环 ----
     while (playing_)
@@ -333,21 +386,18 @@ void FFmpegPlayer::DecodeLoop()
         video_clock_ms_ = pts_ms;
         last_frame_pts_ms_ = pts_ms;
 
-        //// ---- [调试] 打印前 5 秒的同步数据 ----
-        //double elapsed = now_ms - decode_start_time_ms;
-        //if (elapsed < 5000.0)
-        //{
-        //    qDebug().noquote()
-        //        << QString("[Sync]  %1  %2  %3  %4  %5  %6  e=%7 l=%8")
-        //        .arg(pts_ms, 8, 'f', 1)
-        //        .arg(audio_clk_sec * 1000.0, 8, 'f', 1)
-        //        .arg(diff_sec * 1000.0, 8, 'f', 1)
-        //        .arg(delay_sec * 1000.0, 8, 'f', 1)
-        //        .arg(frame_timer_ms_, 8, 'f', 1)
-        //        .arg(now_ms - decode_start_time_ms, 8, 'f', 1)
-        //        .arg(frame_drops_early_)
-        //        .arg(frame_drops_late_);
-        //}
+        // ---- [调试] 打印前 5 秒的同步数据 ----
+        double elapsed = now_ms - decode_start_time_ms;
+        qDebug().noquote()
+            << QString("PTS=%1ms  audclk=%2ms  diff=%3ms  delay=%4ms  timer=%5ms  elapsed=%6ms  drops(e=%7,l=%8)")
+            .arg(pts_ms, 8, 'f', 1)
+            .arg(audio_clk_sec * 1000.0, 0, 'f', 1)
+            .arg(diff_sec * 1000.0, 5, 'f', 1)
+            .arg(delay_sec * 1000.0, 5, 'f', 1)
+            .arg(frame_timer_ms_, 8, 'f', 1)
+            .arg(now_ms - decode_start_time_ms, 8, 'f', 1)
+            .arg(frame_drops_early_)
+            .arg(frame_drops_late_);
 
         // ---- 渲染 ----
         video_renderer_->Render(video_frame);

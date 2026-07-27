@@ -52,7 +52,7 @@ bool VideoDecoder::OpenVideo(AVCodecParameters* video_par, bool try_hardware)
         {
             AVBufferRef* hw_ref = nullptr;
             AVDictionary* dict = nullptr;
-            av_dict_set(&dict, "debug", "1", 0);
+            // av_dict_set(&dict, "debug", "1", 0);
             int ret = av_hwdevice_ctx_create(&hw_ref, hw_type, nullptr, dict, 0);
             if (ret >= 0 && hw_ref)
             {

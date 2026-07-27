@@ -159,6 +159,19 @@ void AudioRenderer::Flush()
     pcm_queue_.clear();
 }
 
+void AudioRenderer::SetVolume(double volume)
+{
+    if (!audio_sink_) return;
+    volume = std::max(0.0, std::min(1.0, volume));
+    audio_sink_->setVolume(volume);
+}
+
+double AudioRenderer::GetVolume() const
+{
+    if (!audio_sink_) return 1.0;
+    return audio_sink_->volume();
+}
+
 bool AudioRenderer::CanAcceptFrame() const
 {
     if (!audio_sink_) return false;

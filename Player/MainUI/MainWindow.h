@@ -1,9 +1,14 @@
 ﻿#pragma once
 
-#include <QtWidgets/QMainWindow>
-#include <QLabel>
+#include <QWidget>
+#include <QImage>
+#include <QTimer>
 
-class MainWindow : public QMainWindow
+class TitleBar;
+class VideoWidget;
+class ControlBar;
+
+class MainWindow : public QWidget
 {
     Q_OBJECT
 
@@ -11,12 +16,33 @@ public:
     MainWindow(QWidget* parent = nullptr);
     ~MainWindow();
 
-    void SetVideoRect(int x, int y, int w, int h);                                  // 设置画面在桌面的位置和尺寸
-    HWND GetVideoHwnd() const;                                                      // 返回窗口句柄，给 D3D11 创建交换链用
+    void SetVideoRect(int x, int y, int w, int h);
+    void OnFrameReady(const QImage& image);
+
+    VideoWidget* GetVideoWidget() const { return video_widget_; }
+    ControlBar* GetControlBar()  const { return control_bar_; }
+    TitleBar* GetTitleBar()    const { return title_bar_; }
+
+    HWND GetVideoHwnd() const;
+
+signals:
+    void SigRequestClose();
 
 public slots:
-    void OnFrameReady(const QImage& image);                                         // 软解回退时接收解码帧并显示
+    void ToggleFullScreen();
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+
+private slots:
+    void OnMouseIdle();
 
 private:
-    QLabel* video_label_{ nullptr };                                                // 用于显示软解画面的标签（GPU 路径时不使用）
+    TitleBar* title_bar_{ nullptr };
+    VideoWidget* video_widget_{ nullptr };
+    ControlBar* control_bar_{ nullptr };
+    QTimer* mouse_idle_timer_{ nullptr };
+    bool          fullscreen_{ false };
 };
