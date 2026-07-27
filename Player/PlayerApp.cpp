@@ -140,17 +140,42 @@ void PlayerApp::BindSignals()
         }
         });
 
-    // 进度条拖动（用户拖动时不触发进度更新，防止冲突）
+    // ---- 进度条拖动 ----
+    // 用户拖拽过程中：暂停进度轮询，但不触发 seek
     QObject::connect(bar->GetSeekBar(), &QSlider::sliderPressed, [this]() {
         if (progress_timer_)
             progress_timer_->stop();
         });
+
+    // 用户松开时：才执行真正的 seek
     QObject::connect(bar->GetSeekBar(), &QSlider::sliderReleased, [this]() {
+        int pos_ms = main_window_->GetControlBar()->GetSeekBar()->value();
+        player_->Seek(pos_ms);
+
         if (player_->IsPlaying() && !player_->IsPaused())
             StartProgressTimer();
         });
-    QObject::connect(bar->GetSeekBar(), &QSlider::sliderMoved, [this](int pos_ms) {
+
+    // 用户点击进度条时
+    QObject::connect(bar, &ControlBar::SigSeekRequested, [this](int pos_ms) {
         player_->Seek(pos_ms);
+
+        if (player_->IsPlaying() && !player_->IsPaused())
+            StartProgressTimer();
+        });
+
+    // 拖拽过程中：只更新进度条和时间标签，不 seek
+    QObject::connect(bar->GetSeekBar(), &QSlider::sliderMoved, [this, bar](int pos_ms) {
+        // 只更新时间标签，不做 seek
+        qint64 dur_ms = player_->GetDuration();
+        auto msToTimeStr = [](qint64 ms) -> QString {
+            int total_sec = static_cast<int>(ms / 1000);
+            return QString("%1:%2")
+                .arg(total_sec / 60, 2, 10, QChar('0'))
+                .arg(total_sec % 60, 2, 10, QChar('0'));
+            };
+        bar->GetTimeLabel()->setText(
+            QString("%1 / %2").arg(msToTimeStr(pos_ms)).arg(msToTimeStr(dur_ms)));
         });
 
     // 音量控制

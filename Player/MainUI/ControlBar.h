@@ -19,6 +19,12 @@ public:
     QLabel* GetTimeLabel()  const { return time_label_; }
     QSlider* GetVolSlider()  const { return vol_slider_; }
 
+signals:
+    void SigSeekRequested(int pos_ms);                                      // 点击轨道时触发 seek
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override;                 // 拦截 seek_bar 鼠标事件
+
 private:
     QPushButton* play_btn_{ nullptr };
     QSlider* seek_bar_{ nullptr };

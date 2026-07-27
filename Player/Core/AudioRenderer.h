@@ -75,6 +75,9 @@ private:
     int  expected_frame_bytes_{ 4096 };                                         // 一帧 S16 立体声 ≈ 1024*2*2
 
     int frame_bytes_{ 0 };                                                      // 缓存一帧 PCM 的大小（字节），第一帧后确定
+
+    double last_frame_pts_ms_{ 0.0 };                                           // 上一帧的 PTS（毫秒，不含帧时长）
+    double frame_duration_ms_{ 0.0 };                                           // 一帧的时长（毫秒）
 };
 
 #endif // AUDIORENDERER_H

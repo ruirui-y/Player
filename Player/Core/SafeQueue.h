@@ -80,11 +80,27 @@ public:
             queue_.pop();
     }
 
+    // 清空队列并自增序列号（seek 时使用）
+    void Flush()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        while (!queue_.empty())
+            queue_.pop();
+        serial_++;
+    }
+
+    int serial()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return serial_;
+    }
+
 private:
     std::queue<T> queue_;
     std::mutex mutex_;
     std::condition_variable cv_;
     bool stopped_{ false };
+    int serial_{ 0 };
 };
 
 #endif // SAFEQUEUE_H

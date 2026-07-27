@@ -198,22 +198,20 @@ void AudioRenderer::FeedPcmData(const QByteArray& pcm_data)
 // 获取当前音频时钟（毫秒），用于音画同步
 double AudioRenderer::GetClock() const
 {
-    if (audio_sink_)
-    {
-        qint64 played_us = audio_sink_->processedUSecs();
-        return std::max(0.0, played_us / 1000.0);  // ← 确保不为负数
-    }
+    // 如果还没有任何音频帧进来，返回 0
+    if (audio_clock_ <= 0.0)
+        return 0.0;
+
+    // 直接返回最后一帧播完的时间
     return audio_clock_;
 }
 
-// ---- 接收已解码的音频帧，重采样后播放 ----
-// Decoder 已经把压缩包解成了 AVFrame（PCM 数据）
-// 这里只需要重采样 + 喂给音频设备，不需要再次 avcodec_send_packet
+// 接收已解码的音频帧，重采样后喂给声卡
 bool AudioRenderer::FeedFrame(AVFrame* frame)
 {
     if (!frame || !swr_ctx_) return false;
 
-    // 只计算一次，后续帧直接用缓存值
+    // ---- 第一步：缓存帧大小（首帧计算，后续复用） ----
     if (frame_bytes_ == 0)
     {
         int dst_nb_samples = av_rescale_rnd(
@@ -221,36 +219,35 @@ bool AudioRenderer::FeedFrame(AVFrame* frame)
             sample_rate_, frame->sample_rate, AV_ROUND_UP);
         frame_bytes_ = av_samples_get_buffer_size(
             nullptr, 2, dst_nb_samples, AV_SAMPLE_FMT_S16, 1);
-        qDebug() << "[AudioRenderer] 帧大小缓存:" << frame_bytes_ << "字节";
     }
 
-    // ---- 第一步：重采样为 S16 格式（QAudioOutput 要求的格式） ----
+    // ---- 第二步：更新音频时钟 ----
+    // PTS 有效时用帧 PTS 校准（seek 后时钟立刻跳到新位置）
+    double frame_duration_ms = (double)frame->nb_samples / frame->sample_rate * 1000.0;
+    if (frame->pts != AV_NOPTS_VALUE)
+    {
+        audio_clock_ = (double)frame->pts / frame->sample_rate * 1000.0 + frame_duration_ms;
+    }
+
+    // ---- 第三步：重采样为 S16 格式 ----
     int dst_nb_samples = av_rescale_rnd(
         swr_get_delay(swr_ctx_, frame->sample_rate) + frame->nb_samples,
         sample_rate_, frame->sample_rate, AV_ROUND_UP);
 
     QByteArray pcm_data;
-    pcm_data.resize(dst_nb_samples * 2 * 2);  // S16 双声道：每个采样 2 字节 × 2 声道
-
+    pcm_data.resize(dst_nb_samples * 2 * 2);
     uint8_t* dst[] = { reinterpret_cast<uint8_t*>(pcm_data.data()) };
-
     int ret = swr_convert(swr_ctx_,
         dst, dst_nb_samples,
         const_cast<const uint8_t**>(frame->data), frame->nb_samples);
-
     if (ret < 0) return false;
 
-    int actual_size = av_samples_get_buffer_size(
-        nullptr, 2, ret, AV_SAMPLE_FMT_S16, 1);
-
+    int actual_size = av_samples_get_buffer_size(nullptr, 2, ret, AV_SAMPLE_FMT_S16, 1);
     pcm_data.resize(actual_size);
 
     if (debug_wav_file_.isOpen())
-    {
         debug_wav_file_.write(pcm_data);
-    }
 
-    // ---- 第二步：喂给音频设备 ----
     FeedPcmData(pcm_data);
     return true;
 }

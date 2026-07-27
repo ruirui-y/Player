@@ -110,6 +110,17 @@ void AudioDecoder::AudioDecodeLoop()
         AVPacket* pkt = packet_queue_.Pop();
         if (!pkt) break;             // 队列已停止
 
+        // ---- 检测 serial 变化（seek 后自动 flush） ----
+        int cur_serial = packet_queue_.serial();
+        if (cur_serial != last_serial_)
+        {
+            if (audio_ctx_)
+                avcodec_flush_buffers(audio_ctx_);
+            frame_queue_.Clear();
+            last_serial_ = cur_serial;
+            qDebug() << "[AudioDecoder] serial 变化，flush 解码器，新 serial =" << cur_serial;
+        }
+
         DecodePacket(pkt);
         av_packet_free(&pkt);
     }

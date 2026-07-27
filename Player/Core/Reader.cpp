@@ -10,6 +10,9 @@ extern "C"
 
 #include <QDebug>
 
+#define MAX_VIDEO_PACKETS 100
+#define MAX_AUDIO_PACKETS 100
+
 Reader::Reader(SafeQueue<AVPacket*>& video_packet_queue,
     SafeQueue<AVPacket*>& audio_packet_queue)
     : video_packet_queue_(video_packet_queue)
@@ -127,8 +130,8 @@ void Reader::ReadLoop()
             int64_t ts = target_ms * AV_TIME_BASE / 1000;
             av_seek_frame(fmt_ctx_, -1, ts, AVSEEK_FLAG_BACKWARD);
             qDebug() << "[Reader] 跳转到" << target_ms << "ms";
-            video_packet_queue_.Clear();
-            audio_packet_queue_.Clear();
+            video_packet_queue_.Flush();
+            audio_packet_queue_.Flush();
         }
 
         // ---- 第二步：读一个压缩包 ----
@@ -143,17 +146,18 @@ void Reader::ReadLoop()
             // ---- 通知两个解码线程文件读取完毕 ----
             video_packet_queue_.Push(nullptr);
             audio_packet_queue_.Push(nullptr);
+            qDebug() << "视频压缩队列大小 =" << video_packet_queue_.Size() << ", 音频压缩队列大小 =" << audio_packet_queue_.Size();
             break;
         }
 
         // ---- 第三步：按流类型分拣到不同队列 ----
         if (pkt->stream_index == video_stream_idx_)
         {
-            video_packet_queue_.Push(pkt);
+            video_packet_queue_.PushMax(pkt, MAX_VIDEO_PACKETS);
         }
         else if (pkt->stream_index == audio_stream_idx_)
         {
-            audio_packet_queue_.Push(pkt);
+            audio_packet_queue_.PushMax(pkt, MAX_AUDIO_PACKETS);
         }
         else
         {

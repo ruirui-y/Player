@@ -38,6 +38,7 @@ private:
 
     std::thread         thread_;                                                        // 解码线程
     std::atomic<bool>   running_{ false };                                              // 运行标志
+    int last_serial_{ -1 };                                                             // 解码器记录serial, 变化时flush
 };
 
 #endif // AUDIODECODER_H

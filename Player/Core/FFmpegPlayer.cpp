@@ -146,42 +146,15 @@ void FFmpegPlayer::Seek(qint64 pts_ms)
 {
     if (!playing_) return;
 
-    // 1. 暂停渲染
-    paused_ = true;
-
-    // 2. 暂停声卡
-    audio_renderer_->Pause();
-
-    // 3. Reader 跳转
+    // 1. 设置 reader 跳转目标（异步，ReadLoop 会在下一次循环执行 seek）
+    qDebug() << "当前 video_clock_ms = " << video_clock_ms_ << " [FFmpegPlayer] 跳转至 " << pts_ms << "ms";
     reader_.Seek(pts_ms);
 
-    // 4. 等待 Reader 完成跳转（同步等待 seek 被处理）
-    // Reader 的 ReadLoop 会检测 seek_target_ms_ 并执行 av_seek_frame
-    // 短暂等待确保 seek 生效
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-
-    // 5. 清空解码器
-    video_decoder_.Flush();
-    audio_decoder_.Flush();
-
-    // 6. 清空帧队列
-    video_frame_queue_.Clear();
-    audio_frame_queue_.Clear();
-
-    // 7. 清空音频缓冲区
-    audio_renderer_->Flush();
-
-    // 8. 重置同步状态
+    // 2. 重置帧状态（等待新帧自然流入）
     frame_timer_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
     last_frame_pts_ms_ = 0.0;
     video_clock_ms_ = 0.0;
-    frame_drops_early_ = 0;
-    frame_drops_late_ = 0;
-
-    // 9. 恢复
-    paused_ = false;
-    audio_renderer_->Resume();
 }
 
 // ---- 停止 ----
@@ -270,7 +243,6 @@ void FFmpegPlayer::DecodeLoop()
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    // if (!playing_) goto cleanup;
 
     // ---- 第三步：初始化 ----
     frame_timer_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -323,7 +295,8 @@ void FFmpegPlayer::DecodeLoop()
         double audio_clk_sec = 0.0;
         if (has_audio)
             audio_clk_sec = audio_renderer_->GetClock() / 1000.0;                                       // 当前音频播放时间点 (秒)
-        
+        // qDebug() << "audio_clk_sec = " << audio_clk_sec << "s";
+
         // diff_sec = 0 表示视频帧与音频播放时间点完全同步
         // diff_sec < 0 表示视频帧比音频播放时间点早
         // diff_sec > 0 表示视频帧比音频播放时间点晚
@@ -404,7 +377,6 @@ void FFmpegPlayer::DecodeLoop()
         av_frame_free(&video_frame);
     }
 
-cleanup:
     qDebug() << "[FFmpegPlayer] DecodeLoop 退出, early_drop ="
         << frame_drops_early_ << ", late_drop =" << frame_drops_late_;
 
