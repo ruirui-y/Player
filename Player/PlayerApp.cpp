@@ -2,12 +2,14 @@
 #include "MainUI/MainWindow.h"
 #include "MainUI/VideoWidget.h"
 #include "MainUI/ControlBar.h"
+#include "MainUI/FileBrowser.h"
 #include "Core/FFmpegPlayer.h"
 
 #include <QApplication>
 #include <QFile>
 #include <QSlider>
 #include <QTimer>
+#include <QFileDialog>
 #include <QDebug>
 
 // ==== 辅助函数：毫秒 → "mm:ss" 格式 ====
@@ -45,8 +47,7 @@ bool PlayerApp::Init(int argc, char* argv[])
     CreatePlayer();
     BindSignals();
 
-    QString videoPath = "H:/YJJ/Project/Player/Player/Movie/huanyou.mp4";
-    OpenFile(videoPath);
+    // 不再自动打开视频，等待用户通过文件浏览器选择
 
     return true;
 }
@@ -85,22 +86,30 @@ void PlayerApp::CreatePlayer()
         main_window_->GetVideoWidget(), &VideoWidget::OnFrameReady);
 
     // ===== 状态信号 =====
-    QObject::connect(player_, &FFmpegPlayer::SigLoaded, [this](qint64 duration_ms) {
+    QObject::connect(player_, &FFmpegPlayer::SigLoaded, this, [this](qint64 duration_ms) {
         qDebug("文件加载完成，时长: %lld ms", duration_ms);
 
         ControlBar* bar = main_window_->GetControlBar();
 
-        // 设置进度条范围：0 ~ 总时长（毫秒）
         bar->GetSeekBar()->setRange(0, static_cast<int>(duration_ms));
 
-        // 更新时间标签：00:00 / 总时长
         bar->GetTimeLabel()->setText(
             QString("00:00 / %1").arg(msToTimeStr(duration_ms)));
         });
 
-    QObject::connect(player_, &FFmpegPlayer::SigFinished, [this]() {
-        qDebug("播放结束");
-        main_window_->GetControlBar()->GetPlayBtn()->setText("▶");
+    QObject::connect(player_, &FFmpegPlayer::SigFinished, this, [this]() 
+        {
+            qDebug("播放结束");
+
+            // ---- 停止进度轮询 ----
+            if (progress_timer_)
+                progress_timer_->stop();
+
+            // ---- UI 重置（这些是线程安全的信号槽调用，不受影响） ----
+            main_window_->GetControlBar()->GetPlayBtn()->setText("▶");
+            main_window_->GetControlBar()->GetSeekBar()->setValue(0);
+            main_window_->GetControlBar()->GetTimeLabel()->setText("00:00 / 00:00");
+            main_window_->GetVideoWidget()->ClearFrame();
         });
 
     QObject::connect(player_, &FFmpegPlayer::SigError, [](const QString& msg) {
@@ -116,8 +125,15 @@ void PlayerApp::BindSignals()
 {
     ControlBar* bar = main_window_->GetControlBar();
 
-    // 播放/暂停
-    QObject::connect(bar->GetPlayBtn(), &QPushButton::clicked, [this, bar]() {
+    // ---- 播放/暂停（无文件时打开文件浏览器） ----
+    QObject::connect(bar->GetPlayBtn(), &QPushButton::clicked, this, [this, bar]() {
+        if (!player_ || player_->GetDuration() <= 0)
+        {
+            // 未加载文件 → 弹出文件浏览器让用户选择
+            OnSelectFile();
+            return;
+        }
+
         if (player_->IsPlaying())
         {
             if (player_->IsPaused())
@@ -141,14 +157,12 @@ void PlayerApp::BindSignals()
         });
 
     // ---- 进度条拖动 ----
-    // 用户拖拽过程中：暂停进度轮询，但不触发 seek
-    QObject::connect(bar->GetSeekBar(), &QSlider::sliderPressed, [this]() {
+    QObject::connect(bar->GetSeekBar(), &QSlider::sliderPressed, this, [this]() {
         if (progress_timer_)
             progress_timer_->stop();
         });
 
-    // 用户松开时：才执行真正的 seek
-    QObject::connect(bar->GetSeekBar(), &QSlider::sliderReleased, [this]() {
+    QObject::connect(bar->GetSeekBar(), &QSlider::sliderReleased, this, [this]() {
         int pos_ms = main_window_->GetControlBar()->GetSeekBar()->value();
         player_->Seek(pos_ms);
 
@@ -156,35 +170,47 @@ void PlayerApp::BindSignals()
             StartProgressTimer();
         });
 
-    // 用户点击进度条时
-    QObject::connect(bar, &ControlBar::SigSeekRequested, [this](int pos_ms) {
+    QObject::connect(bar, &ControlBar::SigSeekRequested, this, [this](int pos_ms) {
         player_->Seek(pos_ms);
 
         if (player_->IsPlaying() && !player_->IsPaused())
             StartProgressTimer();
         });
 
-    // 拖拽过程中：只更新进度条和时间标签，不 seek
-    QObject::connect(bar->GetSeekBar(), &QSlider::sliderMoved, [this, bar](int pos_ms) {
-        // 只更新时间标签，不做 seek
+    // 拖拽过程中仅更新时间标签
+    QObject::connect(bar->GetSeekBar(), &QSlider::sliderMoved, this, [this, bar](int pos_ms) {
         qint64 dur_ms = player_->GetDuration();
-        auto msToTimeStr = [](qint64 ms) -> QString {
-            int total_sec = static_cast<int>(ms / 1000);
+        auto ts = [](qint64 ms) -> QString {
+            int s = static_cast<int>(ms / 1000);
             return QString("%1:%2")
-                .arg(total_sec / 60, 2, 10, QChar('0'))
-                .arg(total_sec % 60, 2, 10, QChar('0'));
+                .arg(s / 60, 2, 10, QChar('0'))
+                .arg(s % 60, 2, 10, QChar('0'));
             };
         bar->GetTimeLabel()->setText(
-            QString("%1 / %2").arg(msToTimeStr(pos_ms)).arg(msToTimeStr(dur_ms)));
+            QString("%1 / %2").arg(ts(pos_ms)).arg(ts(dur_ms)));
         });
 
-    // 音量控制
-    QObject::connect(bar->GetVolSlider(), &QSlider::valueChanged, [this](int vol) {
+    // ---- 音量控制 ----
+    QObject::connect(bar->GetVolSlider(), &QSlider::valueChanged, this, [this](int vol) {
         player_->SetVolume(vol / 100.0);
         });
 
-    // 退出按钮绑定 清理d3d设备资源
-    QObject::connect(main_window_, &MainWindow::SigRequestClose, [this]() {
+    // ---- 文件浏览器切换 ----
+    QObject::connect(bar, &ControlBar::SigToggleFileBrowser,
+        main_window_, &MainWindow::ToggleFileBrowser);
+
+    // ---- 文件浏览器选定文件 ----
+    QObject::connect(main_window_->GetFileBrowser(), &FileBrowser::SigFileSelected,
+        this, &PlayerApp::OnFileSelected);
+
+    // ---- 外部拖拽文件 ----
+    QObject::connect(main_window_, &MainWindow::SigFileDropped,
+        this, [this](const QString& path) {
+            OpenFile(path);
+        });
+
+    // ---- 退出 ----
+    QObject::connect(main_window_, &MainWindow::SigRequestClose, this, [this]() {
         if (player_)
         {
             player_->Close();
@@ -194,7 +220,7 @@ void PlayerApp::BindSignals()
         });
 }
 
-// ---- 启动进度轮询（每 200ms 更新一次） ----
+// ---- 启动进度轮询（每 200ms） ----
 void PlayerApp::StartProgressTimer()
 {
     if (!progress_timer_)
@@ -215,18 +241,19 @@ void PlayerApp::UpdateProgress()
 
     ControlBar* bar = main_window_->GetControlBar();
 
-    // 更新进度条（不触发 sliderMoved 信号）
     bar->GetSeekBar()->blockSignals(true);
     bar->GetSeekBar()->setValue(static_cast<int>(pos_ms));
     bar->GetSeekBar()->blockSignals(false);
 
-    // 更新时间标签：当前时间 / 总时长
     bar->GetTimeLabel()->setText(
         QString("%1 / %2").arg(msToTimeStr(pos_ms)).arg(msToTimeStr(dur_ms)));
 }
 
+// ---- 打开文件并播放 ----
 void PlayerApp::OpenFile(const QString& path)
 {
+    player_->Stop();
+
     if (player_->OpenFile(path))
     {
         player_->Play();
@@ -237,4 +264,24 @@ void PlayerApp::OpenFile(const QString& path)
     {
         qDebug("文件打开失败: %s", qPrintable(path));
     }
+}
+
+// ---- 文件浏览器选定文件 ----
+void PlayerApp::OnFileSelected(const QString& path)
+{
+    OpenFile(path);
+}
+
+// ---- 点击播放按钮但无文件时，弹出文件选择对话框 ----
+void PlayerApp::OnSelectFile()
+{
+    QString path = QFileDialog::getOpenFileName(
+        main_window_,
+        u8"选择视频文件",
+        QString(),
+        u8"视频文件 (*.mp4 *.mkv *.avi *.mov *.flv *.wmv *.ts *.webm *.m4v "
+        u8"*.3gp *.mpeg *.mpg *.rmvb *.vob);;所有文件 (*.*)");
+
+    if (!path.isEmpty())
+        OpenFile(path);
 }

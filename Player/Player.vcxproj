@@ -111,6 +111,7 @@
     <ClCompile Include="Core\VideoRenderer.cpp" />
     <ClCompile Include="Core\Reader.cpp" />
     <ClCompile Include="MainUI\ControlBar.cpp" />
+    <ClCompile Include="MainUI\FileBrowser.cpp" />
     <ClCompile Include="MainUI\TitleBar.cpp" />
     <ClCompile Include="MainUI\VideoWidget.cpp" />
     <ClCompile Include="PlayerApp.cpp" />
@@ -132,6 +133,7 @@
     <ClInclude Include="Core\SafeQueue.h" />
     <ClInclude Include="Core\Reader.h" />
     <ClInclude Include="Core\VideoDecoder.h" />
+    <QtMoc Include="MainUI\FileBrowser.h" />
     <QtMoc Include="MainUI\TitleBar.h" />
     <QtMoc Include="PlayerApp.h" />
     <QtMoc Include="MainUI\ControlBar.h" />

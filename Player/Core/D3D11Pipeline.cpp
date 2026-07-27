@@ -1,7 +1,9 @@
 ﻿#include "D3D11Pipeline.h"
 #include <QDebug>
 
+#include <dxgi1_3.h> 
 #include <d3dcompiler.h>
+#include <thread>
 
 // ---- 内嵌 HLSL 着色器代码 ----
 // 顶点着色器用 SV_VertexID 凭空生成全屏三角形，不需要顶点缓冲区
@@ -58,6 +60,21 @@ bool D3D11Pipeline::IsReady() const
     return swapchain_ && pixel_shader_;
 }
 
+void D3D11Pipeline::Clear()
+{
+    if (!d3d11_ctx_ || !swapchain_ || !rtv_) return;
+
+    // 绑定 RTV
+    d3d11_ctx_->OMSetRenderTargets(1, &rtv_, nullptr);
+
+    // 清空为纯黑（不绑 SRV，不走着色器）
+    float black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    d3d11_ctx_->ClearRenderTargetView(rtv_, black);
+
+    // Present 上屏
+    swapchain_->Present(1, 0);
+}
+
 // 用外部 D3D11 设备创建交换链和着色器
 bool D3D11Pipeline::CreateSwapChain(ID3D11Device* device, int width, int height)
 {
@@ -69,6 +86,13 @@ bool D3D11Pipeline::CreateSwapChain(ID3D11Device* device, int width, int height)
     }
 
     qDebug() << "[D3D11Pipeline] 开始创建渲染管线，分辨率:" << width << "x" << height;
+
+    // 保存新设备前，清空旧设备上下文的状态
+    if (d3d11_ctx_)
+    {
+        d3d11_ctx_->ClearState();
+        d3d11_ctx_->Flush();
+    }
 
     // 保存设备指针，增加引用计数防止外部意外释放
     d3d11_device_ = device;
@@ -101,6 +125,28 @@ bool D3D11Pipeline::CreateSwapChain(ID3D11Device* device, int width, int height)
 // ================================================================
 bool D3D11Pipeline::CreateD3D11SwapChain(int width, int height)
 {
+    // 出让时间片，让 DXGI 有机会回收旧交换链的 HWND 绑定
+    std::this_thread::yield();
+
+    // ---- 检查 D3D11 设备状态 ----
+    if (d3d11_device_)
+    {
+        HRESULT reason = d3d11_device_->GetDeviceRemovedReason();
+        if (reason != S_OK)
+        {
+            qDebug() << "[D3D11Pipeline] 设备已移除, reason =" << reason
+                << "，当前 CreateSwapChain 会失败";
+            return false;
+        }
+    }
+
+    // ---- 清理旧状态 ----
+    if (d3d11_ctx_)
+    {
+        d3d11_ctx_->ClearState();           // 清空所有绑定（RTV、SRV 等）
+        d3d11_ctx_->Flush();                // 确保 GPU 命令执行完
+    }
+
     // ---- 从 D3D11 设备向上查询 DXGI 工厂 ----
     // 设备→适配器（显卡）→工厂（管理交换链的对象）
     IDXGIDevice* dxgi_dev = nullptr;
@@ -240,12 +286,42 @@ void D3D11Pipeline::Execute(
 // 释放所有 D3D11 资源
 void D3D11Pipeline::Release()
 {
-    if (swapchain_) { swapchain_->Release();       swapchain_ = nullptr; }
-    if (d3d11_ctx_) { d3d11_ctx_->Release();       d3d11_ctx_ = nullptr; }
-    if (rtv_) { rtv_->Release();               rtv_ = nullptr; }
-    if (d3d11_device_) { d3d11_device_->Release();      d3d11_device_ = nullptr; }
-    if (vertex_shader_) { vertex_shader_->Release();    vertex_shader_ = nullptr; }
-    if (pixel_shader_) { pixel_shader_->Release();     pixel_shader_ = nullptr; }
-    if (sampler_linear_) { sampler_linear_->Release();   sampler_linear_ = nullptr; }
-    qDebug() << "[D3D11Pipeline] 渲染资源已释放";
+    // ---- ① 清空设备上下文所有绑定，触发交换链的延迟销毁 ----
+    if (d3d11_ctx_)
+    {
+        d3d11_ctx_->ClearState();
+        d3d11_ctx_->Flush();
+    }
+
+    // ---- ② 释放 RTV（它持有后缓冲的引用） ----
+    if (rtv_) { rtv_->Release(); rtv_ = nullptr; }
+
+    // ---- ③ 释放交换链（先退出全屏） ----
+    if (swapchain_)
+    {
+        swapchain_->SetFullscreenState(FALSE, nullptr);
+        swapchain_->Release();
+        swapchain_ = nullptr;
+    }
+
+    // ---- ④ Trim DXGI 设备，回收延迟销毁的旧交换链 ----
+    if (d3d11_device_)
+    {
+        IDXGIDevice3* dxgi_dev3 = nullptr;
+        if (SUCCEEDED(d3d11_device_->QueryInterface(
+            __uuidof(IDXGIDevice3), (void**)&dxgi_dev3)))
+        {
+            dxgi_dev3->Trim();          // 关键！强制释放旧交换链的 HWND 绑定
+            dxgi_dev3->Release();
+        }
+    }
+
+    // ---- ⑤ 释放着色器和采样器 ----
+    if (vertex_shader_) { vertex_shader_->Release(); vertex_shader_ = nullptr; }
+    if (pixel_shader_) { pixel_shader_->Release(); pixel_shader_ = nullptr; }
+    if (sampler_linear_) { sampler_linear_->Release(); sampler_linear_ = nullptr; }
+
+    // ---- ⑥ 释放设备上下文和设备（放最后） ----
+    if (d3d11_ctx_) { d3d11_ctx_->Release(); d3d11_ctx_ = nullptr; }
+    if (d3d11_device_) { d3d11_device_->Release(); d3d11_device_ = nullptr; }
 }

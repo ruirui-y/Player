@@ -85,6 +85,9 @@
     <ClCompile Include="MainUI\TitleBar.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MainUI\FileBrowser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="TCP\TcpServer.h">
@@ -115,6 +118,9 @@
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="MainUI\TitleBar.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="MainUI\FileBrowser.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>

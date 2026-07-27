@@ -73,6 +73,15 @@ public:
         cv_.notify_all();
     }
 
+    void Reset()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        while (!queue_.empty())
+            queue_.pop();
+        stopped_ = false;
+        serial_ = 0;        // serial 也归零，避免 seek 后 serial 增长失控
+    }
+
     void Clear()
     {
         std::lock_guard<std::mutex> lock(mutex_);

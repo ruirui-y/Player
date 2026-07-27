@@ -104,3 +104,10 @@ bool VideoRenderer::IsGpuReady() const
 {
     return d3d11_pipeline_->IsReady();
 }
+
+void VideoRenderer::ClearFrame()
+{
+    if (d3d11_pipeline_->IsReady())
+        d3d11_pipeline_->Clear();
+    // GPU 不可用时（CPU 回退）走 QLabel 清空
+}

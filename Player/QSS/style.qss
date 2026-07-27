@@ -1,87 +1,298 @@
 ﻿/* ===== MainWindow ===== */
 MainWindow {
-    background-color: black;
+    background-color: #1e1e1e;
 }
 
-/* ===== VideoWidget ===== */
+/* ===== VideoWidget（视频窗口保持纯黑） ===== */
 VideoWidget {
     background-color: black;
 }
 
 /* ===== ControlBar ===== */
 ControlBar {
-    background-color: #2d2d2d;
+    background-color: #181818;
+    border-top: 1px solid #2a2a2a;
 }
 
 /* 播放/暂停按钮 */
 #PlayBtn {
-    background-color: #555;
-    color: white;
+    background-color: transparent;
+    color: #e0e0e0;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
+    font-size: 18px;
+    min-width: 36px;
+    min-height: 36px;
 }
 #PlayBtn:hover {
-    background-color: #777;
+    background-color: #333;
+    color: #fff;
+}
+#PlayBtn:pressed {
+    background-color: #444;
 }
 
 /* 进度条 */
+#SeekBar {
+    height: 20px;
+}
 #SeekBar::groove:horizontal {
     height: 4px;
-    background: #555;
+    background: #333;
+    border-radius: 2px;
 }
 #SeekBar::handle:horizontal {
-    width: 12px;
-    margin: -4px 0;
-    border-radius: 6px;
-    background: #fff;
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 7px;
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
+        stop:0 #fff, stop:0.7 #eee, stop:1 #ccc);
+    border: 2px solid #555;
+}
+#SeekBar::handle:horizontal:hover {
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
+        stop:0 #fff, stop:0.7 #fff, stop:1 #eee);
+    border-color: #1a73e8;
 }
 #SeekBar::sub-page:horizontal {
-    background: #1a73e8;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #1a73e8, stop:1 #4a9eff);
+    border-radius: 2px;
 }
 
 /* 时间标签 */
 #TimeLabel {
-    color: #ccc;
+    color: #999;
     font-size: 12px;
+    font-family: "Consolas", "Courier New", monospace;
+    padding: 0 6px;
+    min-width: 110px;
 }
 
 /* 音量滑块 */
+#VolSlider {
+    height: 20px;
+    min-width: 60px;
+}
 #VolSlider::groove:horizontal {
-    height: 4px;
-    background: #555;
+    height: 3px;
+    background: #333;
+    border-radius: 1.5px;
 }
 #VolSlider::handle:horizontal {
     width: 10px;
-    margin: -3px 0;
+    height: 10px;
+    margin: -3.5px 0;
     border-radius: 5px;
+    background: #ccc;
+}
+#VolSlider::handle:horizontal:hover {
     background: #fff;
 }
 #VolSlider::sub-page:horizontal {
     background: #1a73e8;
+    border-radius: 1.5px;
+}
+
+/* 文件夹/文件浏览器切换按钮 */
+#FolderBtn {
+    background-color: transparent;
+    color: #888;
+    border: none;
+    font-size: 18px;
+    min-width: 36px;
+    min-height: 36px;
+    border-radius: 6px;
+}
+#FolderBtn:hover {
+    background-color: #333;
+    color: #e0e0e0;
+}
+#FolderBtn:checked {
+    color: #4a9eff;
+    background-color: #1a3a5c;
+}
+#FolderBtn:checked:hover {
+    background-color: #1e4a7a;
 }
 
 /* ===== TitleBar 标题栏 ===== */
 #TitleBar {
-    background-color: #1a1a1a;
+    background-color: #141414;
+    border-bottom: 1px solid #2a2a2a;
 }
 
 #TitleLabel {
-    color: #ccc;
+    color: #aaa;
     font-size: 12px;
-    padding-left: 8px;
+    padding-left: 12px;
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
 }
 
 #TitleBtnMin, #TitleBtnMax, #TitleBtnClose {
     background-color: transparent;
     color: #888;
     border: none;
-    font-size: 14px;
+    font-size: 12px;
+    min-width: 36px;
+    min-height: 28px;
 }
 #TitleBtnMin:hover, #TitleBtnMax:hover {
     color: #fff;
-    background-color: #444;
+    background-color: #333;
 }
 #TitleBtnClose:hover {
     color: #fff;
-    background-color: #c42b2b;
+    background-color: #e81123;
+}
+
+/* ===== FileBrowser 文件浏览器面板 ===== */
+#FileBrowser {
+    background-color: #1a1a1a;
+    border-left: 1px solid #2a2a2a;
+}
+
+/* 顶部工具栏 */
+#FileBrowserTopBar {
+    background-color: #1e1e1e;
+    border-bottom: 1px solid #2a2a2a;
+    padding: 4px;
+}
+
+/* 文件夹路径标签 */
+#PathLabel {
+    color: #888;
+    font-size: 11px;
+    padding: 6px 10px;
+    background-color: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    margin: 4px 6px;
+}
+
+/* 选择文件夹按钮 */
+#SelectFolderBtn {
+    background-color: #2a2a2a;
+    color: #ccc;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 5px 12px;
+    font-size: 11px;
+    margin: 4px 6px;
+}
+#SelectFolderBtn:hover {
+    background-color: #3a3a3a;
+    color: #fff;
+    border-color: #4a9eff;
+}
+#SelectFolderBtn:pressed {
+    background-color: #444;
+}
+
+/* 树形视图（文件列表） */
+#FileTree {
+    background-color: #1a1a1a;
+    color: #ccc;
+    border: none;
+    font-size: 12px;
+    outline: none;
+    show-decoration-selected: 0;
+}
+#FileTree::item {
+    padding: 4px 8px;
+    border: none;
+    border-radius: 4px;
+    margin: 1px 4px;
+}
+#FileTree::item:selected {
+    background-color: #1a3a5c;
+    color: #e0e0e0;
+    border: none;
+}
+#FileTree::item:selected:active {
+    background-color: #1a73e8;
+    color: #fff;
+}
+#FileTree::item:hover {
+    background-color: #2a2a2a;
+    color: #e0e0e0;
+}
+#FileTree::branch:has-children:closed {
+    border-image: none;
+    image: none;
+}
+#FileTree::branch:has-children:open {
+    border-image: none;
+    image: none;
+}
+
+/* 树形视图表头（隐藏） */
+#FileTree QHeaderView::section {
+    background-color: #222;
+    color: #777;
+    border: none;
+    border-bottom: 1px solid #333;
+    font-size: 11px;
+    padding: 4px 8px;
+}
+
+/* 垂直滚动条 */
+QTreeView QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    margin: 0;
+}
+QTreeView QScrollBar::handle:vertical {
+    background-color: #444;
+    min-height: 30px;
+    border-radius: 4px;
+    margin: 2px;
+}
+QTreeView QScrollBar::handle:vertical:hover {
+    background-color: #666;
+}
+QTreeView QScrollBar::handle:vertical:pressed {
+    background-color: #888;
+}
+QTreeView QScrollBar::add-line:vertical,
+QTreeView QScrollBar::sub-line:vertical {
+    height: 0;
+}
+QTreeView QScrollBar::add-page:vertical,
+QTreeView QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+/* 水平滚动条 */
+QTreeView QScrollBar:horizontal {
+    background: transparent;
+    height: 8px;
+    margin: 0;
+}
+QTreeView QScrollBar::handle:horizontal {
+    background-color: #444;
+    min-width: 30px;
+    border-radius: 4px;
+    margin: 2px;
+}
+QTreeView QScrollBar::handle:horizontal:hover {
+    background-color: #666;
+}
+QTreeView QScrollBar::handle:horizontal:pressed {
+    background-color: #888;
+}
+QTreeView QScrollBar::add-line:horizontal,
+QTreeView QScrollBar::sub-line:horizontal {
+    width: 0;
+}
+QTreeView QScrollBar::add-page:horizontal,
+QTreeView QScrollBar::sub-page:horizontal {
+    background: none;
+}
+
+/* 分割线 */
+QSplitter::handle {
+    background-color: #2a2a2a;
+    width: 3px;
 }

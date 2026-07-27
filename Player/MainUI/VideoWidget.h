@@ -19,6 +19,7 @@ public:
 
 public slots:
     void OnFrameReady(const QImage& image);             // 软解回退时显示一帧
+    void ClearFrame();                                  // 清空画面
 
 private:
     QLabel* video_label_{ nullptr };                    // 软解回退时显示画面

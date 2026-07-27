@@ -54,5 +54,9 @@ void TitleBar::mousePressEvent(QMouseEvent* event)
 void TitleBar::mouseMoveEvent(QMouseEvent* event)
 {
     if (event->buttons() & Qt::LeftButton)
-        parentWidget()->move(event->globalPos() - drag_start_pos_);
+    {
+        QWidget* win = window();                // ← 改为 window()，找到顶层 MainWindow
+        win->move(win->pos() + event->globalPos() - drag_start_pos_);
+        drag_start_pos_ = event->globalPos();
+    }
 }

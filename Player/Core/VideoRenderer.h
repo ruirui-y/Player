@@ -29,6 +29,8 @@ public:
 
     bool IsGpuReady() const;                                                    // GPU 管线是否就绪
 
+    void ClearFrame();                                                          // 清空画面
+
 signals:
     void SigFrameReady(const QImage& image);                                    // 软解回退时发射
 

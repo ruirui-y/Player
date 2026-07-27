@@ -14,22 +14,25 @@ class ControlBar : public QWidget
 public:
     explicit ControlBar(QWidget* parent = nullptr);
 
-    QPushButton* GetPlayBtn()    const { return play_btn_; }
-    QSlider* GetSeekBar()    const { return seek_bar_; }
-    QLabel* GetTimeLabel()  const { return time_label_; }
-    QSlider* GetVolSlider()  const { return vol_slider_; }
+    QPushButton* GetPlayBtn()     const { return play_btn_; }
+    QSlider* GetSeekBar()     const { return seek_bar_; }
+    QLabel* GetTimeLabel()   const { return time_label_; }
+    QSlider* GetVolSlider()   const { return vol_slider_; }
+    QPushButton* GetFolderBtn()   const { return folder_btn_; }
 
 signals:
-    void SigSeekRequested(int pos_ms);                                      // 点击轨道时触发 seek
+    void SigSeekRequested(int pos_ms);
+    void SigToggleFileBrowser();                        // 切换文件浏览器
 
 protected:
-    bool eventFilter(QObject* obj, QEvent* event) override;                 // 拦截 seek_bar 鼠标事件
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
     QPushButton* play_btn_{ nullptr };
     QSlider* seek_bar_{ nullptr };
     QLabel* time_label_{ nullptr };
     QSlider* vol_slider_{ nullptr };
+    QPushButton* folder_btn_{ nullptr };                // 文件浏览器切换按钮
 };
 
 #endif // CONTROLBAR_H

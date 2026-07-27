@@ -24,6 +24,15 @@ HWND VideoWidget::GetVideoHwnd() const
     return (HWND)winId();
 }
 
+void VideoWidget::ClearFrame()
+{
+    if (video_label_)
+    {
+        video_label_->clear();                      // 清除 QLabel 内容
+        video_label_->setText("");                  // 确保是空
+    }
+}
+
 void VideoWidget::OnFrameReady(const QImage& image)
 {
     if (!video_label_) return;

@@ -3,6 +3,7 @@
 #include "AudioRenderer.h"
 #include <QDebug>
 #include <chrono>
+#include <windows.h> 
 
 extern "C"
 {
@@ -25,7 +26,6 @@ FFmpegPlayer::FFmpegPlayer(QObject* parent)
 // ---- 析构 ----
 FFmpegPlayer::~FFmpegPlayer()
 {
-    Close();
     delete video_renderer_;
     delete audio_renderer_;
 }
@@ -117,6 +117,12 @@ void FFmpegPlayer::Play()
         return;
     }
 
+    // ---- 重置所有队列（上一次 Close 后队列是 stopped 状态） ----
+    video_packet_queue_.Reset();
+    audio_packet_queue_.Reset();
+    video_frame_queue_.Reset();
+    audio_frame_queue_.Reset();
+    
     audio_renderer_->Start();
 
     playing_ = true;
@@ -157,7 +163,7 @@ void FFmpegPlayer::Seek(qint64 pts_ms)
     video_clock_ms_ = 0.0;
 }
 
-// ---- 停止 ----
+// ---- 停止播放（只停止线程，不释放解码器/渲染器资源） ----
 void FFmpegPlayer::Stop()
 {
     if (!playing_) return;
@@ -168,24 +174,34 @@ void FFmpegPlayer::Stop()
     video_decoder_.Stop();
     audio_decoder_.Stop();
 
-    if (decode_thread_.joinable()) decode_thread_.join();
+    if (decode_thread_.joinable())
+    {
+        auto tid = decode_thread_.get_id();
+        if (tid != std::this_thread::get_id())   // 防止线程自己 join 自己
+            decode_thread_.join();
+    }
 
     audio_renderer_->Stop();
     current_pts_ms_ = 0;
     emit SigPlayState("stopped");
 }
 
-// ---- 关闭全部资源 ----
+// ---- 关闭全部资源（只调用一次） ----
 void FFmpegPlayer::Close()
 {
+    if (duration_ms_ == 0) return;           // 已经关闭过了
     qDebug() << "[FFmpegPlayer] 关闭播放器引擎";
+
     Stop();
-    reader_.Stop();
-    video_decoder_.Stop();
-    audio_decoder_.Stop();
+
+    // 释放渲染器资源（这一步必须在主线程或 COM 初始化后的线程）
     video_renderer_->Release();
     audio_renderer_->Close();
+
+    // 标记已关闭
     duration_ms_ = 0;
+
+    qDebug() << "[FFmpegPlayer] 播放器资源已全部释放";
 }
 
 // ---- getter ----
@@ -211,6 +227,9 @@ double FFmpegPlayer::GetVolume() const { return audio_renderer_->GetVolume(); }
 // ================================================================
 void FFmpegPlayer::DecodeLoop()
 {
+    // ---- 初始化 COM 公寓（子线程调用 D3D11 需要） ----
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
     qDebug() << "[FFmpegPlayer] DecodeLoop 启动";
 
     // ---- 第一步：获取视频帧率 ----
@@ -361,16 +380,16 @@ void FFmpegPlayer::DecodeLoop()
 
         // ---- [调试] 打印前 5 秒的同步数据 ----
         double elapsed = now_ms - decode_start_time_ms;
-        qDebug().noquote()
-            << QString("PTS=%1ms  audclk=%2ms  diff=%3ms  delay=%4ms  timer=%5ms  elapsed=%6ms  drops(e=%7,l=%8)")
-            .arg(pts_ms, 8, 'f', 1)
-            .arg(audio_clk_sec * 1000.0, 0, 'f', 1)
-            .arg(diff_sec * 1000.0, 5, 'f', 1)
-            .arg(delay_sec * 1000.0, 5, 'f', 1)
-            .arg(frame_timer_ms_, 8, 'f', 1)
-            .arg(now_ms - decode_start_time_ms, 8, 'f', 1)
-            .arg(frame_drops_early_)
-            .arg(frame_drops_late_);
+        //qDebug().noquote()
+        //    << QString("PTS=%1ms  audclk=%2ms  diff=%3ms  delay=%4ms  timer=%5ms  elapsed=%6ms  drops(e=%7,l=%8)")
+        //    .arg(pts_ms, 8, 'f', 1)
+        //    .arg(audio_clk_sec * 1000.0, 0, 'f', 1)
+        //    .arg(diff_sec * 1000.0, 5, 'f', 1)
+        //    .arg(delay_sec * 1000.0, 5, 'f', 1)
+        //    .arg(frame_timer_ms_, 8, 'f', 1)
+        //    .arg(now_ms - decode_start_time_ms, 8, 'f', 1)
+        //    .arg(frame_drops_early_)
+        //    .arg(frame_drops_late_);
 
         // ---- 渲染 ----
         video_renderer_->Render(video_frame);
@@ -386,5 +405,12 @@ void FFmpegPlayer::DecodeLoop()
         while (audio_frame_queue_.TryPop(f)) av_frame_free(&f);
     }
 
-    emit SigFinished();
+    if (playing_)
+    {
+        video_renderer_->ClearFrame();
+        emit SigFinished();
+    }
+    
+    // ---- 释放 COM 公寓 ----
+    CoUninitialize();
 }

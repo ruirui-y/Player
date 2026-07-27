@@ -29,7 +29,10 @@ private:
     void StartProgressTimer();                                  // 启动进度轮询定时器
     void UpdateProgress();                                      // 更新进度条 + 时间标签
     void OpenFile(const QString& path);                         // 打开并播放文件
+    void OnFileSelected(const QString& path);                   // 文件浏览器选定文件
+    void OnSelectFile();                                        // 弹出文件选择对话框（播放按钮无文件时）
 
+private:
     MainWindow* main_window_{ nullptr };
     FFmpegPlayer* player_{ nullptr };
     QTimer* progress_timer_{ nullptr };                         // 进度轮询定时器

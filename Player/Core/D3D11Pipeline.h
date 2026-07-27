@@ -1,4 +1,4 @@
-#ifndef D3D11PIPELINE_H
+﻿#ifndef D3D11PIPELINE_H
 #define D3D11PIPELINE_H
 
 #include <d3d11.h>
@@ -24,6 +24,8 @@ public:
     void Release();                                                             // 释放所有资源
 
     bool IsReady() const;                                                       // 渲染管线是否就绪
+
+    void Clear();                                                               // 清空渲染画面为纯黑
 
 private:
     bool CreateD3D11SwapChain(int width, int height);                           // 创建交换链
