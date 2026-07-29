@@ -52,3 +52,7 @@ Tools
 Pack
 Movie
 /Player/*.pcm
+/Player/OBS
+/Player/moonlight
+*.h264
+*.mp4
