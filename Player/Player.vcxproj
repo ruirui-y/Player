@@ -114,79 +114,84 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Core\AudioDecoder.cpp" />
-    <ClCompile Include="Core\AudioRenderer.cpp" />
-    <ClCompile Include="Core\FFmpegPlayer.cpp" />
-    <ClCompile Include="Core\D3D11Pipeline.cpp" />
-    <ClCompile Include="Core\Nv12GpuUploader.cpp" />
-    <ClCompile Include="Core\SoftwareRenderer.cpp" />
-    <ClCompile Include="Core\VideoRenderer.cpp" />
-    <ClCompile Include="Core\Reader.cpp" />
-    <ClCompile Include="MainUI\ControlBar.cpp" />
-    <ClCompile Include="MainUI\FileBrowser.cpp" />
-    <ClCompile Include="MainUI\TitleBar.cpp" />
-    <ClCompile Include="MainUI\VideoWidget.cpp" />
-    <ClCompile Include="OBS_Capture\CursorCapture.cpp" />
-    <ClCompile Include="OBS_Capture\DcCapture.cpp" />
-    <ClCompile Include="OBS_Capture\DxgiDuplicator.cpp" />
-    <ClCompile Include="OBS_Capture\MonitorCapture.cpp" />
-    <ClCompile Include="OBS_Capture\ObsNvencEncoder.cpp" />
-    <ClCompile Include="OBS_Capture\WgcCapture.cpp" />
-    <ClCompile Include="OBS_Capture\WindowCapture.cpp" />
-    <ClCompile Include="PlayerApp.cpp" />
-    <ClCompile Include="TCP\TcpServer.cpp" />
-    <ClCompile Include="Thread\WorkerThread.cpp" />
-    <ClCompile Include="Core\VideoDecoder.cpp" />
+    <ClCompile Include="Client\Core\AudioDecoder.cpp" />
+    <ClCompile Include="Client\Core\AudioRenderer.cpp" />
+    <ClCompile Include="Client\Core\FFmpegPlayer.cpp" />
+    <ClCompile Include="Client\Core\D3D11Pipeline.cpp" />
+    <ClCompile Include="Client\Core\Nv12GpuUploader.cpp" />
+    <ClCompile Include="Client\Core\SoftwareRenderer.cpp" />
+    <ClCompile Include="Client\Core\VideoRenderer.cpp" />
+    <ClCompile Include="Client\Core\Reader.cpp" />
+    <ClCompile Include="Client\MainUI\ControlBar.cpp" />
+    <ClCompile Include="Client\MainUI\FileBrowser.cpp" />
+    <ClCompile Include="Client\MainUI\TitleBar.cpp" />
+    <ClCompile Include="Client\MainUI\VideoWidget.cpp" />
+    <ClCompile Include="Client\Core\VideoDecoder.cpp" />
+    <ClCompile Include="Client\MainUI\MainWindow.cpp" />
+    <ClCompile Include="Server\OBS_Capture\CursorCapture.cpp" />
+    <ClCompile Include="Server\OBS_Capture\DcCapture.cpp" />
+    <ClCompile Include="Server\OBS_Capture\DxgiDuplicator.cpp" />
+    <ClCompile Include="Server\OBS_Capture\MonitorCapture.cpp" />
+    <ClCompile Include="Server\OBS_Capture\ObsNvencEncoder.cpp" />
+    <ClCompile Include="Server\OBS_Capture\WgcCapture.cpp" />
+    <ClCompile Include="Server\OBS_Capture\WindowCapture.cpp" />
+    <ClCompile Include="App\PlayerApp.cpp" />
+    <ClCompile Include="App\main.cpp" />
+    <ClCompile Include="Common\TcpServer.cpp" />
+    <ClCompile Include="Common\WorkerThread.cpp" />
     <QtRcc Include="Player.qrc" />
     <QtUic Include="Player.ui" />
-    <QtMoc Include="MainUI\MainWindow.h" />
-    <ClCompile Include="MainUI\MainWindow.cpp" />
-    <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <QtMoc Include="TCP\TcpServer.h" />
+    <QtMoc Include="Common\TcpServer.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Core\AudioDecoder.h" />
-    <ClInclude Include="Core\ClockUtil.h" />
-    <ClInclude Include="Core\SafeQueue.h" />
-    <ClInclude Include="Core\Reader.h" />
-    <ClInclude Include="Core\VideoDecoder.h" />
-    <ClInclude Include="OBS_Capture\CaptureCommon.h" />
-    <ClInclude Include="OBS_Capture\CursorCapture.h" />
-    <ClInclude Include="OBS_Capture\DcCapture.h" />
-    <ClInclude Include="OBS_Capture\DxgiDuplicator.h" />
-    <ClInclude Include="OBS_Capture\MonitorCapture.h" />
-    <ClInclude Include="OBS_Capture\ObsNvencEncoder.h" />
-    <ClInclude Include="OBS_Capture\WgcCapture.h" />
-    <ClInclude Include="OBS_Capture\WindowCapture.h" />
-    <QtMoc Include="MainUI\FileBrowser.h" />
-    <QtMoc Include="MainUI\TitleBar.h" />
-    <QtMoc Include="PlayerApp.h" />
-    <QtMoc Include="MainUI\ControlBar.h" />
-    <QtMoc Include="MainUI\VideoWidget.h" />
-    <QtMoc Include="Thread\WorkerThread.h" />
-    <QtMoc Include="Core\AudioRenderer.h" />
-    <ClInclude Include="Core\D3D11Pipeline.h" />
-    <ClInclude Include="Core\Nv12GpuUploader.h" />
-    <QtMoc Include="Core\VideoRenderer.h" />
+    <ClInclude Include="Client\Core\AudioDecoder.h" />
+    <ClInclude Include="Common\ClockUtil.h" />
+    <ClInclude Include="Common\SafeQueue.h" />
+    <ClInclude Include="Client\Core\Reader.h" />
+    <ClInclude Include="Client\Core\VideoDecoder.h" />
+    <ClInclude Include="Server\OBS_Capture\CaptureCommon.h" />
+    <ClInclude Include="Server\OBS_Capture\CursorCapture.h" />
+    <ClInclude Include="Server\OBS_Capture\DcCapture.h" />
+    <ClInclude Include="Server\OBS_Capture\DxgiDuplicator.h" />
+    <ClInclude Include="Server\OBS_Capture\MonitorCapture.h" />
+    <ClInclude Include="Server\OBS_Capture\ObsNvencEncoder.h" />
+    <ClInclude Include="Server\OBS_Capture\WgcCapture.h" />
+    <ClInclude Include="Server\OBS_Capture\WindowCapture.h" />
+    <QtMoc Include="Client\MainUI\FileBrowser.h" />
+    <QtMoc Include="Client\MainUI\TitleBar.h" />
+    <QtMoc Include="App\PlayerApp.h" />
+    <QtMoc Include="Client\MainUI\ControlBar.h" />
+    <QtMoc Include="Client\MainUI\VideoWidget.h" />
+    <QtMoc Include="Common\WorkerThread.h" />
+    <QtMoc Include="Client\Core\AudioRenderer.h" />
+    <ClInclude Include="Client\Core\D3D11Pipeline.h" />
+    <ClInclude Include="Client\Core\Nv12GpuUploader.h" />
+    <QtMoc Include="Client\Core\VideoRenderer.h" />
   </ItemGroup>
   <ItemGroup>
-    <QtMoc Include="Core\SoftwareRenderer.h" />
+    <QtMoc Include="Client\Core\SoftwareRenderer.h" />
   </ItemGroup>
   <ItemGroup>
-    <QtMoc Include="Core\FFmpegPlayer.h" />
+    <QtMoc Include="Client\Core\FFmpegPlayer.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <QtMoc Include="Client\MainUI\MainWindow.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Notes\8k30帧.md" />
     <None Include="Notes\AI边缘检测.md" />
     <None Include="Notes\ffplay完整流程分析.md" />
     <None Include="Notes\MoonLight\Moonlight 学习笔记：从零实现低延迟桌面串流.md" />
+    <None Include="Notes\MoonLight\基于 FFmpeg nvenc.c 做录屏迁移.md" />
+    <None Include="Notes\MoonLight\基于OBS的屏幕捕获.md" />
     <None Include="Notes\MoonLight\桌面捕获.md" />
     <None Include="Notes\从 CPU 到 GPU 的演进总结.md" />
     <None Include="Notes\基于ffplay的音视频同步改造.md" />
     <None Include="Notes\大纲.md" />
     <None Include="Notes\播放器完整流程拆解.md" />
+    <None Include="Notes\用户交互.md" />
     <None Include="Notes\补齐基础知识-自学.md" />
     <None Include="Notes\视频帧渲染完整流程.md" />
     <None Include="Notes\软解码.md" />
