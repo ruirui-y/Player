@@ -96,6 +96,74 @@ bool FFmpegPlayer::OpenFile(const QString& path)
     return true;
 }
 
+// ---- 打开网络串流（低延迟模式）----
+// 与 OpenFile 的区别：不经过 Reader/AVFormatContext，直接用 VideoReceiver 收 UDP 包
+// 解码器手动创建 H.264 参数，渲染时跳过音视频同步，收到帧立刻渲染
+bool FFmpegPlayer::OpenStream(uint16_t port, int width, int height, int fps)
+{
+    Close();
+
+    is_streaming_ = true;
+    stream_fps_ = fps;
+    stream_width_ = width;
+    stream_height_ = height;
+    duration_ms_ = 0;                                      // 串流无固定时长
+
+    // ---- 第一步：手动构造 H.264 的 AVCodecParameters ----
+    // 串流没有 AVFormatContext，需要手动告诉解码器 codec_id / 分辨率 / 像素格式
+    AVCodecParameters* par = avcodec_parameters_alloc();
+    par->codec_type = AVMEDIA_TYPE_VIDEO;
+    par->codec_id = AV_CODEC_ID_H264;
+    par->width = width;
+    par->height = height;
+    par->format = AV_PIX_FMT_NV12;                         // NVENC 输出 NV12
+
+    // ---- 第二步：打开视频解码器 ----
+    video_decoder_.SetStreamIndex(0);
+    if (!video_decoder_.OpenVideo(par, true))
+    {
+        qDebug() << "[FFmpegPlayer] 硬解失败，尝试软解";
+        if (!video_decoder_.OpenVideo(par, false))
+        {
+            avcodec_parameters_free(&par);
+            emit SigError("Open video decoder failed");
+            return false;
+        }
+    }
+    avcodec_parameters_free(&par);
+
+    // ---- 第三步：初始化渲染器 ----
+    if (video_decoder_.IsHardwareDecoding())
+    {
+        ID3D11Device* device = video_decoder_.GetD3D11Device();
+        if (device)
+        {
+            if (!video_renderer_->Init(device, width, height))
+            {
+                qDebug() << "[FFmpegPlayer] 创建 GPU 管线失败，将回退到 CPU 渲染";
+            }
+        }
+    }
+
+    // ---- 第四步：创建并初始化 UDP 接收器 ----
+    video_receiver_ = new VideoReceiver();
+    if (!video_receiver_->Init(port, &video_packet_queue_))
+    {
+        qDebug() << "[FFmpegPlayer] VideoReceiver 初始化失败";
+        delete video_receiver_;
+        video_receiver_ = nullptr;
+        is_streaming_ = false;
+        emit SigError("VideoReceiver init failed");
+        return false;
+    }
+
+    qDebug() << "[FFmpegPlayer] === 串流加载完毕 ==="
+             << width << "x" << height << "@" << fps << "fps"
+             << "端口" << port;
+    emit SigLoaded(0);                                     // 串流无时长，发 0
+    return true;
+}
+
 // ---- 开始/恢复播放 ----
 void FFmpegPlayer::Play()
 {
@@ -129,9 +197,18 @@ void FFmpegPlayer::Play()
     paused_ = false;
     decode_thread_ = std::thread(&FFmpegPlayer::DecodeLoop, this);
 
-    reader_.Start();
-    video_decoder_.Start();
-    audio_decoder_.Start();
+    if (is_streaming_)
+    {
+        // 串流模式：启动 VideoReceiver 代替 Reader
+        video_receiver_->Start();
+        video_decoder_.Start();
+    }
+    else
+    {
+        reader_.Start();
+        video_decoder_.Start();
+        audio_decoder_.Start();
+    }
 
     emit SigPlayState("playing");
 }
@@ -170,9 +247,18 @@ void FFmpegPlayer::Stop()
     qDebug() << "[FFmpegPlayer] 停止播放";
     playing_ = false;
 
-    reader_.Stop();
-    video_decoder_.Stop();
-    audio_decoder_.Stop();
+    if (is_streaming_)
+    {
+        // 串流模式：停 VideoReceiver 代替 Reader
+        if (video_receiver_) video_receiver_->Stop();
+        video_decoder_.Stop();
+    }
+    else
+    {
+        reader_.Stop();
+        video_decoder_.Stop();
+        audio_decoder_.Stop();
+    }
 
     if (decode_thread_.joinable())
     {
@@ -189,7 +275,7 @@ void FFmpegPlayer::Stop()
 // ---- 关闭全部资源（只调用一次） ----
 void FFmpegPlayer::Close()
 {
-    if (duration_ms_ == 0) return;           // 已经关闭过了
+    if (duration_ms_ == 0 && !is_streaming_) return;        // 已经关闭过了
     qDebug() << "[FFmpegPlayer] 关闭播放器引擎";
 
     Stop();
@@ -197,6 +283,15 @@ void FFmpegPlayer::Close()
     // 释放渲染器资源（这一步必须在主线程或 COM 初始化后的线程）
     video_renderer_->Release();
     audio_renderer_->Close();
+
+    // 串流模式：释放 VideoReceiver
+    if (video_receiver_)
+    {
+        delete video_receiver_;
+        video_receiver_ = nullptr;
+    }
+
+    is_streaming_ = false;
 
     // 标记已关闭
     duration_ms_ = 0;
@@ -232,22 +327,36 @@ void FFmpegPlayer::DecodeLoop()
 
     qDebug() << "[FFmpegPlayer] DecodeLoop 启动";
 
-    // ---- 第一步：获取视频帧率 ----
+    // ---- 第一步：获取视频帧率与时基 ----
     double fps = 30.0;
-    AVStream* vstream = reader_.FormatContext()->streams[reader_.VideoStreamIndex()];
-    if (vstream->avg_frame_rate.den > 0 && vstream->avg_frame_rate.num > 0)
-        fps = av_q2d(vstream->avg_frame_rate);
-    if (fps <= 0) fps = 30.0;
+    AVRational video_tb = { 1, 90000 };                    // 默认 90kHz 时基
+    bool has_audio = false;
+
+    if (is_streaming_)
+    {
+        // 串流模式：固定参数，无音频
+        fps = static_cast<double>(stream_fps_);
+        has_audio = false;
+    }
+    else
+    {
+        // 文件模式：从 reader 获取流信息
+        AVStream* vstream = reader_.FormatContext()->streams[reader_.VideoStreamIndex()];
+        if (vstream->avg_frame_rate.den > 0 && vstream->avg_frame_rate.num > 0)
+            fps = av_q2d(vstream->avg_frame_rate);
+        if (fps <= 0) fps = 30.0;
+
+        video_tb = reader_.FormatContext()
+            ->streams[reader_.VideoStreamIndex()]->time_base;
+        has_audio = (reader_.AudioStreamIndex() >= 0);
+    }
+
     double frame_interval_ms = 1000.0 / fps;
     double max_frame_duration_ms = 1000.0;
-    qDebug() << "[FFmpegPlayer] 视频帧率：" << fps << "fps" << ", 帧间隔：" << frame_interval_ms << "ms";
+    qDebug() << "[FFmpegPlayer] 视频帧率：" << fps << "fps" << ", 帧间隔：" << frame_interval_ms << "ms"
+             << (is_streaming_ ? "[串流模式]" : "[文件模式]");
 
-    // 获取视频 time_base
-    AVRational video_tb = reader_.FormatContext()
-        ->streams[reader_.VideoStreamIndex()]->time_base;
-    bool has_audio = (reader_.AudioStreamIndex() >= 0);
-
-    // ---- 第二步：等待音视频队列都有数据 ----
+    // ---- 第二步：等待队列有数据 ----
     while (playing_)
     {
         if (paused_)
@@ -256,9 +365,17 @@ void FFmpegPlayer::DecodeLoop()
             continue;
         }
 
-        bool audio_ok = !has_audio || audio_frame_queue_.Size() >= 2;
-        bool video_ok = video_frame_queue_.Size() >= 1;
-        if (audio_ok && video_ok) break;
+        if (is_streaming_)
+        {
+            // 串流模式：只需视频帧队列有数据
+            if (video_frame_queue_.Size() >= 1) break;
+        }
+        else
+        {
+            bool audio_ok = !has_audio || audio_frame_queue_.Size() >= 2;
+            bool video_ok = video_frame_queue_.Size() >= 1;
+            if (audio_ok && video_ok) break;
+        }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -282,6 +399,22 @@ void FFmpegPlayer::DecodeLoop()
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
+
+        // ---- 串流低延迟模式：收到帧立刻渲染，跳过所有同步逻辑 ----
+        if (is_streaming_)
+        {
+            AVFrame* video_frame = video_frame_queue_.Pop();
+            if (!video_frame) break;
+
+            if (video_frame->pts != AV_NOPTS_VALUE)
+                current_pts_ms_ = static_cast<qint64>(video_frame->pts * av_q2d(video_tb) * 1000.0);
+
+            video_renderer_->Render(video_frame);
+            av_frame_free(&video_frame);
+            continue;
+        }
+
+        // ---- 以下为文件模式的音视频同步逻辑 ----
 
         // ---- 喂音频（非阻塞，先检查空间） ----
         if (has_audio)

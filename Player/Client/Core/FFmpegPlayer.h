@@ -10,6 +10,7 @@
 #include "VideoDecoder.h"
 #include "AudioDecoder.h"
 #include "Common/ClockUtil.h"
+#include "Common/NetWork/VideoReceiver.h"
 
 class VideoRenderer;        // 视频渲染层（前向声明）
 class AudioRenderer;        // 音频渲染层（前向声明）
@@ -28,6 +29,7 @@ public:
     void SetVideoHwnd(HWND hwnd);                                                       // 设置渲染窗口句柄
 
     bool OpenFile(const QString& path);                                                 // 打开文件
+    bool OpenStream(uint16_t port, int width, int height, int fps);                      // 打开网络串流（低延迟模式）
     void Play();                                                                        // 开始/恢复播放
     void Pause();                                                                       // 暂停
     void Seek(qint64 pts_ms);                                                           // 跳转到指定位置（毫秒）
@@ -81,4 +83,11 @@ private:
     Reader        reader_{ video_packet_queue_, audio_packet_queue_ };
     VideoDecoder  video_decoder_{ video_packet_queue_, video_frame_queue_ };
     AudioDecoder  audio_decoder_{ audio_packet_queue_, audio_frame_queue_ };
+
+    // ---- 串流模式 ----
+    VideoReceiver* video_receiver_{ nullptr };                       // UDP 接收器（串流模式使用）
+    bool is_streaming_{ false };                                      // 是否串流模式
+    int  stream_fps_{ 60 };                                          // 串流帧率
+    int  stream_width_{ 0 };                                         // 串流画面宽度
+    int  stream_height_{ 0 };                                       // 串流画面高度
 };

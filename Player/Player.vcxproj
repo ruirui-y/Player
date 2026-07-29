@@ -74,11 +74,13 @@
     </Link>
     <ClCompile>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;d3d11.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -126,6 +128,8 @@
     <ClCompile Include="Client\MainUI\FileBrowser.cpp" />
     <ClCompile Include="Client\MainUI\TitleBar.cpp" />
     <ClCompile Include="Client\MainUI\VideoWidget.cpp" />
+    <ClCompile Include="Client\StreamUI\StreamVideoWidget.cpp" />
+    <ClCompile Include="Client\StreamUI\StreamWindow.cpp" />
     <ClCompile Include="Client\Core\VideoDecoder.cpp" />
     <ClCompile Include="Client\MainUI\MainWindow.cpp" />
     <ClCompile Include="Server\OBS_Capture\CursorCapture.cpp" />
@@ -135,10 +139,13 @@
     <ClCompile Include="Server\OBS_Capture\ObsNvencEncoder.cpp" />
     <ClCompile Include="Server\OBS_Capture\WgcCapture.cpp" />
     <ClCompile Include="Server\OBS_Capture\WindowCapture.cpp" />
+    <ClCompile Include="Server\StreamServer.cpp" />
     <ClCompile Include="App\PlayerApp.cpp" />
     <ClCompile Include="App\main.cpp" />
     <ClCompile Include="Common\TcpServer.cpp" />
     <ClCompile Include="Common\WorkerThread.cpp" />
+    <ClCompile Include="Common\NetWork\VideoSender.cpp" />
+    <ClCompile Include="Common\NetWork\VideoReceiver.cpp" />
     <QtRcc Include="Player.qrc" />
     <QtUic Include="Player.ui" />
   </ItemGroup>
@@ -149,6 +156,9 @@
     <ClInclude Include="Client\Core\AudioDecoder.h" />
     <ClInclude Include="Common\ClockUtil.h" />
     <ClInclude Include="Common\SafeQueue.h" />
+    <ClInclude Include="Common\NetWork\NalUnit.h" />
+    <ClInclude Include="Common\NetWork\VideoSender.h" />
+    <ClInclude Include="Common\NetWork\VideoReceiver.h" />
     <ClInclude Include="Client\Core\Reader.h" />
     <ClInclude Include="Client\Core\VideoDecoder.h" />
     <ClInclude Include="Server\OBS_Capture\CaptureCommon.h" />
@@ -159,11 +169,14 @@
     <ClInclude Include="Server\OBS_Capture\ObsNvencEncoder.h" />
     <ClInclude Include="Server\OBS_Capture\WgcCapture.h" />
     <ClInclude Include="Server\OBS_Capture\WindowCapture.h" />
+    <ClInclude Include="Server\StreamServer.h" />
     <QtMoc Include="Client\MainUI\FileBrowser.h" />
     <QtMoc Include="Client\MainUI\TitleBar.h" />
     <QtMoc Include="App\PlayerApp.h" />
     <QtMoc Include="Client\MainUI\ControlBar.h" />
     <QtMoc Include="Client\MainUI\VideoWidget.h" />
+    <QtMoc Include="Client\StreamUI\StreamVideoWidget.h" />
+    <QtMoc Include="Client\StreamUI\StreamWindow.h" />
     <QtMoc Include="Common\WorkerThread.h" />
     <QtMoc Include="Client\Core\AudioRenderer.h" />
     <ClInclude Include="Client\Core\D3D11Pipeline.h" />

@@ -1,8 +1,10 @@
-﻿#include "PlayerApp.h"
+#include "PlayerApp.h"
 #include "Client/MainUI/MainWindow.h"
 #include "Client/MainUI/VideoWidget.h"
 #include "Client/MainUI/ControlBar.h"
 #include "Client/MainUI/FileBrowser.h"
+#include "Client/StreamUI/StreamWindow.h"
+#include "Client/StreamUI/StreamVideoWidget.h"
 #include "Client/Core/FFmpegPlayer.h"
 #include "Server/OBS_Capture/MonitorCapture.h"
 #include "Server/OBS_Capture/ObsNvencEncoder.h"
@@ -22,6 +24,8 @@ extern "C"
 #include <QTimer>
 #include <QFileDialog>
 #include <QDebug>
+#include <cstring>
+#include <cstdlib>
 
 // ==== 辅助函数：毫秒 → "mm:ss" 格式 ====
 static QString msToTimeStr(qint64 ms)
@@ -41,29 +45,73 @@ PlayerApp::PlayerApp(QObject* parent)
 
 PlayerApp::~PlayerApp()
 {
+    if (player_)
+    {
+        player_->Close();
+        delete player_;
+        player_ = nullptr;
+    }
+
     if (main_window_)
     {
         delete main_window_;
         main_window_ = nullptr;
     }
+
+    if (stream_window_)
+    {
+        delete stream_window_;
+        stream_window_ = nullptr;
+    }
 }
 
+// ================================================================
+// ---- Init：解析命令行，分流两种模式 ----
+// ================================================================
 bool PlayerApp::Init(int argc, char* argv[])
 {
-    Q_UNUSED(argc);
-    Q_UNUSED(argv);
-
     LoadStyle();
-    CreateUI();
+
+    // ---- 检测串流模式 ----
+    // 用法：Player.exe --stream --port 47998 --width 1920 --height 1080 --fps 60
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "--stream") == 0)
+        {
+            uint16_t port = 47998;
+            int width = 1920;
+            int height = 1080;
+            int fps = 60;
+
+            for (int j = i + 1; j < argc; ++j)
+            {
+                if (std::strcmp(argv[j], "--port") == 0 && j + 1 < argc)
+                    port = (uint16_t)std::atoi(argv[++j]);
+                else if (std::strcmp(argv[j], "--width") == 0 && j + 1 < argc)
+                    width = std::atoi(argv[++j]);
+                else if (std::strcmp(argv[j], "--height") == 0 && j + 1 < argc)
+                    height = std::atoi(argv[++j]);
+                else if (std::strcmp(argv[j], "--fps") == 0 && j + 1 < argc)
+                    fps = std::atoi(argv[++j]);
+            }
+
+            is_streaming_ = true;
+            CreateStreamUI();
+            CreateStreamPlayer();
+            BindStreamSignals();
+            OpenStream(port, width, height, fps);
+            return true;
+        }
+    }
+
+    // ---- 默认：文件播放器模式 ----
+    CreatePlayerUI();
     CreatePlayer();
-    BindSignals();
-
-    TestScreenCapture();        // 取消注释即可运行测试
-    // 不再自动打开视频，等待用户通过文件浏览器选择
-
+    BindPlayerSignals();
     return true;
 }
 
+// ---- 加载 QSS 样式 ----
 void PlayerApp::LoadStyle()
 {
     QFile qss("QSS/style.qss");
@@ -79,7 +127,11 @@ void PlayerApp::LoadStyle()
     }
 }
 
-void PlayerApp::CreateUI()
+// ================================================================
+// ============== 文件播放器模式 ==============
+// ================================================================
+
+void PlayerApp::CreatePlayerUI()
 {
     main_window_ = new MainWindow();
     main_window_->SetVideoRect(100, 100, 1280, 720);
@@ -109,7 +161,7 @@ void PlayerApp::CreatePlayer()
             QString("00:00 / %1").arg(msToTimeStr(duration_ms)));
         });
 
-    QObject::connect(player_, &FFmpegPlayer::SigFinished, this, [this]() 
+    QObject::connect(player_, &FFmpegPlayer::SigFinished, this, [this]()
         {
             qDebug("播放结束");
 
@@ -117,7 +169,7 @@ void PlayerApp::CreatePlayer()
             if (progress_timer_)
                 progress_timer_->stop();
 
-            // ---- UI 重置（这些是线程安全的信号槽调用，不受影响） ----
+            // ---- UI 重置 ----
             main_window_->GetControlBar()->GetPlayBtn()->setText("▶");
             main_window_->GetControlBar()->GetSeekBar()->setValue(0);
             main_window_->GetControlBar()->GetTimeLabel()->setText("00:00 / 00:00");
@@ -133,7 +185,7 @@ void PlayerApp::CreatePlayer()
         });
 }
 
-void PlayerApp::BindSignals()
+void PlayerApp::BindPlayerSignals()
 {
     ControlBar* bar = main_window_->GetControlBar();
 
@@ -141,7 +193,6 @@ void PlayerApp::BindSignals()
     QObject::connect(bar->GetPlayBtn(), &QPushButton::clicked, this, [this, bar]() {
         if (!player_ || player_->GetDuration() <= 0)
         {
-            // 未加载文件 → 弹出文件浏览器让用户选择
             OnSelectFile();
             return;
         }
@@ -232,7 +283,6 @@ void PlayerApp::BindSignals()
         });
 }
 
-// ---- 启动进度轮询（每 200ms） ----
 void PlayerApp::StartProgressTimer()
 {
     if (!progress_timer_)
@@ -243,7 +293,6 @@ void PlayerApp::StartProgressTimer()
     progress_timer_->start(200);
 }
 
-// ---- 更新进度条 + 时间标签 ----
 void PlayerApp::UpdateProgress()
 {
     if (!player_ || !main_window_) return;
@@ -261,7 +310,6 @@ void PlayerApp::UpdateProgress()
         QString("%1 / %2").arg(msToTimeStr(pos_ms)).arg(msToTimeStr(dur_ms)));
 }
 
-// ---- 打开文件并播放 ----
 void PlayerApp::OpenFile(const QString& path)
 {
     player_->Stop();
@@ -278,13 +326,11 @@ void PlayerApp::OpenFile(const QString& path)
     }
 }
 
-// ---- 文件浏览器选定文件 ----
 void PlayerApp::OnFileSelected(const QString& path)
 {
     OpenFile(path);
 }
 
-// ---- 点击播放按钮但无文件时，弹出文件选择对话框 ----
 void PlayerApp::OnSelectFile()
 {
     QString path = QFileDialog::getOpenFileName(
@@ -475,4 +521,73 @@ void PlayerApp::TestScreenCapture()
     d3d_device->Release();
 
     qDebug() << "[PlayerApp] 完成:" << written << "帧 → capture_10s.h264";
+}
+
+// ================================================================
+// ============== 串流客户端模式 ==============
+// ================================================================
+
+void PlayerApp::CreateStreamUI()
+{
+    stream_window_ = new StreamWindow();
+    stream_window_->SetVideoRect(200, 100, 1280, 720);
+    stream_window_->show();
+}
+
+void PlayerApp::CreateStreamPlayer()
+{
+    player_ = new FFmpegPlayer(this);
+
+    // D3D11 交换链绑定到 StreamVideoWidget 的原生 HWND
+    player_->SetVideoHwnd(stream_window_->GetVideoHwnd());
+
+    // 软解回退：视频帧 QImage → StreamVideoWidget 的 QLabel
+    QObject::connect(player_, &FFmpegPlayer::SigFrameReady,
+        stream_window_->GetVideoWidget(), &StreamVideoWidget::OnFrameReady);
+
+    // ---- 状态信号：更新底部状态栏 ----
+    QObject::connect(player_, &FFmpegPlayer::SigLoaded, this, [this](qint64) {
+        stream_window_->SetStatusText(u8"已连接");
+        });
+
+    QObject::connect(player_, &FFmpegPlayer::SigError, this, [this](const QString& msg) {
+        stream_window_->SetStatusText(u8"错误: " + msg);
+        qDebug("[Stream] 错误: %s", qPrintable(msg));
+        });
+
+    QObject::connect(player_, &FFmpegPlayer::SigPlayState, this, [this](const QString& state) {
+        qDebug("[Stream] 状态: %s", qPrintable(state));
+        });
+}
+
+void PlayerApp::BindStreamSignals()
+{
+    // ---- 退出：关闭播放器引擎 ----
+    QObject::connect(stream_window_, &StreamWindow::SigRequestClose, this, [this]() {
+        if (player_)
+        {
+            player_->Close();
+            delete player_;
+            player_ = nullptr;
+        }
+        });
+}
+
+void PlayerApp::OpenStream(uint16_t port, int width, int height, int fps)
+{
+    stream_window_->SetStatusText(
+        QString(u8"等待连接... 端口 %1  %2x%3@%4fps")
+            .arg(port).arg(width).arg(height).arg(fps));
+
+    if (!player_->OpenStream(port, width, height, fps))
+    {
+        qDebug() << "[PlayerApp] 串流启动失败，端口" << port;
+        stream_window_->SetStatusText(u8"连接失败");
+        return;
+    }
+
+    player_->Play();
+
+    qDebug() << "[PlayerApp] 串流模式启动，端口" << port
+             << width << "x" << height << "@" << fps << "fps";
 }
