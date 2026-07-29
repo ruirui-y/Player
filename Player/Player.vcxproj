@@ -60,18 +60,30 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
-    <IncludePath>H:\YJJ\FFmpeg\include;$(IncludePath)</IncludePath>
+    <IncludePath>H:\YJJ\Project\Player\Player\moonlight\nv-codec-headers\include;H:\YJJ\FFmpeg\include;$(IncludePath)</IncludePath>
     <LibraryPath>H:\YJJ\FFmpeg\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
+    <ExternalIncludePath>H:\YJJ\Project\Player\Player\moonlight\nv-codec-headers\include;H:\YJJ\FFmpeg\include;$(ExternalIncludePath)</ExternalIncludePath>
+    <LibraryPath>H:\YJJ\FFmpeg\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
-      <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;d3d11.lib;dxguid.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <UACExecutionLevel>AsInvoker</UACExecutionLevel>
     </Link>
     <ClCompile>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;d3d11.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <UACExecutionLevel>AsInvoker</UACExecutionLevel>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">
     <ClCompile>
@@ -114,6 +126,13 @@
     <ClCompile Include="MainUI\FileBrowser.cpp" />
     <ClCompile Include="MainUI\TitleBar.cpp" />
     <ClCompile Include="MainUI\VideoWidget.cpp" />
+    <ClCompile Include="OBS_Capture\CursorCapture.cpp" />
+    <ClCompile Include="OBS_Capture\DcCapture.cpp" />
+    <ClCompile Include="OBS_Capture\DxgiDuplicator.cpp" />
+    <ClCompile Include="OBS_Capture\MonitorCapture.cpp" />
+    <ClCompile Include="OBS_Capture\ObsNvencEncoder.cpp" />
+    <ClCompile Include="OBS_Capture\WgcCapture.cpp" />
+    <ClCompile Include="OBS_Capture\WindowCapture.cpp" />
     <ClCompile Include="PlayerApp.cpp" />
     <ClCompile Include="TCP\TcpServer.cpp" />
     <ClCompile Include="Thread\WorkerThread.cpp" />
@@ -133,6 +152,14 @@
     <ClInclude Include="Core\SafeQueue.h" />
     <ClInclude Include="Core\Reader.h" />
     <ClInclude Include="Core\VideoDecoder.h" />
+    <ClInclude Include="OBS_Capture\CaptureCommon.h" />
+    <ClInclude Include="OBS_Capture\CursorCapture.h" />
+    <ClInclude Include="OBS_Capture\DcCapture.h" />
+    <ClInclude Include="OBS_Capture\DxgiDuplicator.h" />
+    <ClInclude Include="OBS_Capture\MonitorCapture.h" />
+    <ClInclude Include="OBS_Capture\ObsNvencEncoder.h" />
+    <ClInclude Include="OBS_Capture\WgcCapture.h" />
+    <ClInclude Include="OBS_Capture\WindowCapture.h" />
     <QtMoc Include="MainUI\FileBrowser.h" />
     <QtMoc Include="MainUI\TitleBar.h" />
     <QtMoc Include="PlayerApp.h" />
@@ -155,6 +182,7 @@
     <None Include="Notes\AI边缘检测.md" />
     <None Include="Notes\ffplay完整流程分析.md" />
     <None Include="Notes\MoonLight\Moonlight 学习笔记：从零实现低延迟桌面串流.md" />
+    <None Include="Notes\MoonLight\桌面捕获.md" />
     <None Include="Notes\从 CPU 到 GPU 的演进总结.md" />
     <None Include="Notes\基于ffplay的音视频同步改造.md" />
     <None Include="Notes\大纲.md" />

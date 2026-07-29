@@ -88,6 +88,42 @@
     <ClCompile Include="MainUI\FileBrowser.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Capture\ScreenCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Capture\NvencEncoder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Capture\NvEncLibrary.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Capture\NvEncSurfacePool.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Capture\NvEncSession.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="OBS_Capture\CursorCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="OBS_Capture\DcCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="OBS_Capture\DxgiDuplicator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="OBS_Capture\MonitorCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="OBS_Capture\WgcCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="OBS_Capture\WindowCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="OBS_Capture\ObsNvencEncoder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="TCP\TcpServer.h">
@@ -146,6 +182,45 @@
     <ClInclude Include="Core\ClockUtil.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Capture\ScreenCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Capture\NvencEncoder.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Capture\NvEncLibrary.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Capture\NvEncSurfacePool.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Capture\NvEncSession.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OBS_Capture\CaptureCommon.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OBS_Capture\CursorCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OBS_Capture\DcCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OBS_Capture\DxgiDuplicator.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OBS_Capture\MonitorCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OBS_Capture\WgcCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OBS_Capture\WindowCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OBS_Capture\ObsNvencEncoder.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="Notes\8k30帧.md" />
@@ -162,5 +237,6 @@
     <None Include="Notes\基于ffplay的音视频同步改造.md" />
     <None Include="QSS\style.qss" />
     <None Include="Notes\MoonLight\Moonlight 学习笔记：从零实现低延迟桌面串流.md" />
+    <None Include="Notes\MoonLight\桌面捕获.md" />
   </ItemGroup>
 </Project>

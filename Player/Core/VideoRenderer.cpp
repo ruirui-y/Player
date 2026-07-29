@@ -60,6 +60,8 @@ void VideoRenderer::Render(AVFrame* frame)
     // ---- 路径一：GPU 硬解帧 → GPU 渲染管线 ----
     if (frame->format == AV_PIX_FMT_D3D11 && d3d11_pipeline_->IsReady())
     {
+        LogTextureInfoOnce(frame);
+
         ID3D11ShaderResourceView* srv_y = nullptr;
         ID3D11ShaderResourceView* srv_uv = nullptr;
 
@@ -92,6 +94,36 @@ void VideoRenderer::Render(AVFrame* frame)
         // 纯软解帧，直接渲染
         sw_renderer_->Render(frame);
     }
+}
+
+// ---- 首次 D3D11 帧打印纹理信息（仅一次） ----
+void VideoRenderer::LogTextureInfoOnce(AVFrame* frame)
+{
+    if (format_logged_) return;
+    format_logged_ = true;
+
+    ID3D11Texture2D* tex = (ID3D11Texture2D*)frame->data[0];
+    D3D11_TEXTURE2D_DESC desc;
+    tex->GetDesc(&desc);
+
+    const char* fmt_str = "Unknown";
+    switch (desc.Format)
+    {
+    case DXGI_FORMAT_NV12: fmt_str = "DXGI_FORMAT_NV12"; break;
+    case DXGI_FORMAT_P010: fmt_str = "DXGI_FORMAT_P010"; break;
+    case DXGI_FORMAT_YUY2: fmt_str = "DXGI_FORMAT_YUY2"; break;
+    case DXGI_FORMAT_AYUV: fmt_str = "DXGI_FORMAT_AYUV"; break;
+    case DXGI_FORMAT_B8G8R8A8_UNORM: fmt_str = "DXGI_FORMAT_B8G8R8A8_UNORM"; break;
+    }
+
+    qDebug() << "[VideoRenderer] D3D11 解码纹理信息:"
+             << "format =" << fmt_str
+             << "| ArraySize =" << desc.ArraySize
+             << "| BindFlags =" << Qt::hex << desc.BindFlags;
+    qDebug() << "[VideoRenderer] 分辨率:" << desc.Width << "x" << desc.Height
+             << "| AVFrame 格式: AV_PIX_FMT_D3D11 (171)"
+             << "| color_range =" << frame->color_range
+             << "| color_space =" << frame->colorspace;
 }
 
 void VideoRenderer::Release()

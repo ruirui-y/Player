@@ -18,7 +18,7 @@ struct VS_OUTPUT {
     float2 Tex : TEXCOORD;
 };
 
-// 顶点着色器：利用顶点 ID 凭空生成一个覆盖全屏的大三角形
+// 顶点着色器
 VS_OUTPUT VS(uint id : SV_VertexID) {
     VS_OUTPUT output;
     output.Tex = float2((id << 1) & 2, id & 2);
@@ -26,17 +26,17 @@ VS_OUTPUT VS(uint id : SV_VertexID) {
     return output;
 }
 
-// 像素着色器：采样 Y 和 UV，转换为 RGB
+// 像素着色器：YUV(NV12 Limited Range BT.709) → RGB Full Range
 float4 PS(VS_OUTPUT input) : SV_Target {
-    float y = texY.Sample(samLinear, input.Tex).r;
-    float2 uv = texUV.Sample(samLinear, input.Tex).rg - 0.5;
-
-    // BT.709 色彩转换公式
-    float r = y + 1.5748 * uv.y;
-    float g = y - 0.1873 * uv.x - 0.4681 * uv.y;
-    float b = y + 1.8556 * uv.x;
-
-    return float4(r, g, b, 1.0);
+    float y_raw = texY.Sample(samLinear, input.Tex).r;
+    float2 uv_raw = texUV.Sample(samLinear, input.Tex).rg;
+    float y = (y_raw - 16.0/255.0) * (255.0 / 219.0);
+    float u = (uv_raw.r - 16.0/255.0) * (255.0 / 224.0) - 0.5;
+    float v = (uv_raw.g - 16.0/255.0) * (255.0 / 224.0) - 0.5;
+    float r = y + 1.5748 * v;
+    float g = y - 0.1873 * u - 0.4681 * v;
+    float b = y + 1.8556 * u;
+    return float4(clamp(float3(r,g,b), 0, 1), 1);
 }
 )";
 

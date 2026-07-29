@@ -31,6 +31,7 @@ private:
     void OpenFile(const QString& path);                         // 打开并播放文件
     void OnFileSelected(const QString& path);                   // 文件浏览器选定文件
     void OnSelectFile();                                        // 弹出文件选择对话框（播放按钮无文件时）
+    void TestScreenCapture();                                   // 测试桌面捕获是否成功
 
 private:
     MainWindow* main_window_{ nullptr };

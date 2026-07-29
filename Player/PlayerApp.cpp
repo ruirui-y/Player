@@ -4,6 +4,17 @@
 #include "MainUI/ControlBar.h"
 #include "MainUI/FileBrowser.h"
 #include "Core/FFmpegPlayer.h"
+#include "OBS_Capture/MonitorCapture.h"
+#include "OBS_Capture/ObsNvencEncoder.h"
+#include <d3d11.h>
+extern "C"
+{
+#include <libavcodec/avcodec.h>
+#include <libavutil/avutil.h>
+#include <libavutil/hwcontext.h>
+#include <libavutil/pixfmt.h>
+#include <libavformat/avformat.h>
+}
 
 #include <QApplication>
 #include <QFile>
@@ -47,6 +58,7 @@ bool PlayerApp::Init(int argc, char* argv[])
     CreatePlayer();
     BindSignals();
 
+    TestScreenCapture();        // 取消注释即可运行测试
     // 不再自动打开视频，等待用户通过文件浏览器选择
 
     return true;
@@ -284,4 +296,183 @@ void PlayerApp::OnSelectFile()
 
     if (!path.isEmpty())
         OpenFile(path);
+}
+
+// 测试桌面捕获 + NVENC 编码（FFmpeg 架构）
+void PlayerApp::TestScreenCapture()
+{
+    qDebug() << "[PlayerApp] 开始录制 10 秒（MonitorCapture + FFmpeg NVENC）";
+
+    // ---- 第一步：创建 D3D11 设备 ----
+    D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
+    ID3D11Device* d3d_device = nullptr;
+    ID3D11DeviceContext* d3d_ctx = nullptr;
+    HRESULT hr = D3D11CreateDevice(
+        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+        D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+        levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
+        &d3d_device, nullptr, &d3d_ctx);
+    if (FAILED(hr))
+    {
+        qDebug() << "[PlayerApp] D3D11 设备创建失败, HR =" << hr;
+        return;
+    }
+
+    // ---- 第二步：枚举显示器，取主显示器 ----
+    auto monitors = MonitorCapture::EnumerateMonitors();
+    if (monitors.empty())
+    {
+        qDebug() << "[PlayerApp] 未找到显示器";
+        d3d_ctx->Release();
+        d3d_device->Release();
+        return;
+    }
+
+    for (size_t i = 0; i < monitors.size(); ++i)
+    {
+        qDebug() << "[PlayerApp] 显示器" << i << ":"
+            << monitors[i].name
+            << monitors[i].rect.right - monitors[i].rect.left << "x"
+            << monitors[i].rect.bottom - monitors[i].rect.top;
+    }
+
+    const char* monitor_id = monitors[1].device_id;
+    qDebug() << "[PlayerApp] 目标:" << monitors[1].name;
+
+    // ---- 第三步：初始化采集器 ----
+    MonitorCapture capture;
+    if (!capture.Init(d3d_device, monitor_id,
+        DisplayCaptureMethod::Auto, true, false))
+    {
+        qDebug() << "[PlayerApp] 采集器初始化失败";
+        d3d_ctx->Release();
+        d3d_device->Release();
+        return;
+    }
+
+    // ---- 第四步：等首帧到达 ----
+    int fps = 60;
+    CaptureFrame frame;
+    int wait = 0;
+
+    while (wait < 300)
+    {
+        capture.Tick(1.0f / fps);
+        if (capture.GetFrame(frame) && frame.IsValid())
+            break;
+        ++wait;
+        Sleep(16);
+    }
+
+    if (!frame.IsValid())
+    {
+        qDebug() << "[PlayerApp] 首帧超时";
+        capture.Shutdown();
+        d3d_ctx->Release();
+        d3d_device->Release();
+        return;
+    }
+
+    int width = static_cast<int>(frame.width);
+    int height = static_cast<int>(frame.height);
+    qDebug() << "[PlayerApp] 首帧:" << width << "x" << height
+        << (frame.IsGpu() ? "GPU" : "CPU");
+
+    // ---- 第五步：初始化编码器 ----
+    ObsNvencEncoder encoder;
+    if (!encoder.Init(d3d_device, width, height, fps, 10000))
+    {
+        qDebug() << "[PlayerApp] 编码器初始化失败";
+        capture.Shutdown();
+        d3d_ctx->Release();
+        d3d_device->Release();
+        return;
+    }
+
+    // ---- 第六步：打开输出文件 ----
+    FILE* fp = nullptr;
+    fopen_s(&fp, "capture_10s.h264", "wb");
+    if (!fp)
+    {
+        qDebug() << "[PlayerApp] 文件创建失败";
+        encoder.Release();
+        capture.Shutdown();
+        d3d_ctx->Release();
+        d3d_device->Release();
+        return;
+    }
+
+    // ---- 第七步：GDI 路线需要上传纹理 ----
+    ID3D11Texture2D* upload_tex = nullptr;
+    if (!frame.IsGpu())
+    {
+        D3D11_TEXTURE2D_DESC desc = {};
+        desc.Width = width;
+        desc.Height = height;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        d3d_device->CreateTexture2D(&desc, nullptr, &upload_tex);
+    }
+
+    // ---- 第八步：主循环 ----
+    int total = fps * 10;
+    int written = 0;
+    uint64_t idx = 0;
+
+    qDebug() << "[PlayerApp] 开始录制...";
+
+    while (written < total)
+    {
+        capture.Tick(1.0f / fps);
+
+        if (!capture.GetFrame(frame) || !frame.IsValid())
+            continue;
+
+        ID3D11Texture2D* tex = nullptr;
+        if (frame.IsGpu())
+        {
+            tex = frame.gpu_texture;
+        }
+        else if (upload_tex && frame.cpu_data)
+        {
+            d3d_ctx->UpdateSubresource(upload_tex, 0, nullptr,
+                frame.cpu_data, frame.cpu_stride, 0);
+            tex = upload_tex;
+        }
+
+        if (!tex)
+            continue;
+
+        std::vector<uint8_t> h264_data;
+        if (encoder.EncodeFrame(tex, idx, (idx == 0), h264_data))
+        {
+            fwrite(h264_data.data(), 1, h264_data.size(), fp);
+            ++written;
+
+            if (written % fps == 0)
+                qDebug() << "[PlayerApp] 已录制" << written / fps << "秒";
+        }
+
+        ++idx;
+    }
+
+    // ---- 第九步：Flush ----
+    qDebug() << "[PlayerApp] Flush...";
+    encoder.Flush([&](const std::vector<uint8_t>& data)
+        {
+            fwrite(data.data(), 1, data.size(), fp);
+            ++written;
+        });
+
+    fclose(fp);
+    if (upload_tex) upload_tex->Release();
+    encoder.Release();
+    capture.Shutdown();
+    d3d_ctx->Release();
+    d3d_device->Release();
+
+    qDebug() << "[PlayerApp] 完成:" << written << "帧 → capture_10s.h264";
 }

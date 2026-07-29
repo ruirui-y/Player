@@ -35,9 +35,12 @@ signals:
     void SigFrameReady(const QImage& image);                                    // 软解回退时发射
 
 private:
+    void LogTextureInfoOnce(AVFrame* frame);                                    // 首次 D3D11 帧打印纹理信息（调试用）
+
     D3D11Pipeline* d3d11_pipeline_{ nullptr };                                  // GPU 渲染管线
     Nv12GpuUploader* nv12_uploader_{ nullptr };                                 // GPU 帧上传器
     SoftwareRenderer* sw_renderer_{ nullptr };                                  // CPU 软解渲染器
+    bool format_logged_{ false };                                               // 纹理信息是否已打印
 };
 
 #endif // VIDEORENDERER_H
