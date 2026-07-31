@@ -1,4 +1,4 @@
-#include "StreamServer.h"
+﻿#include "StreamServer.h"
 
 #include <WinSock2.h>
 #include <WS2tcpip.h>
@@ -9,8 +9,14 @@
 #include <vector>
 
 #include "Common/NetWork/VideoSender.h"
+#include "Common/Input/InputTransport.h"
+#include "Common/Input/InputInjector.h"
+#include "Common/Input/InputEvent.h"
+#include "Common/LogManager.h"
 #include "Server/OBS_Capture/MonitorCapture.h"
+#include "Server/OBS_Capture/IVideoEncoder.h"
 #include "Server/OBS_Capture/ObsNvencEncoder.h"
+#include "Server/OBS_Capture/ObsNvencEncoderFast.h"
 
 // ---- 构造 ----
 StreamServer::StreamServer()
@@ -21,6 +27,10 @@ StreamServer::StreamServer()
 StreamServer::~StreamServer()
 {
     Stop();
+
+    // ---- 第三阶段：先停输入组件 ----
+    if (input_server_)  { input_server_->Stop(); delete input_server_;  input_server_  = nullptr; }
+    if (input_injector_) { delete input_injector_; input_injector_ = nullptr; }
 
     if (sender_)   { sender_->Close();  delete sender_;   sender_   = nullptr; }
     if (encoder_)  { encoder_->Release(); delete encoder_; encoder_  = nullptr; }
@@ -34,7 +44,8 @@ StreamServer::~StreamServer()
 // ---- 初始化：创建 D3D11 → 枚举显示器 → 采集器 → 编码器 → 发送器 ----
 // ================================================================
 bool StreamServer::Init(uint16_t port, int monitor_index,
-                        const char* dest_ip, int fps, int bitrate_kbps)
+                        const char* dest_ip, int fps, int bitrate_kbps,
+                        uint16_t ctrl_port, bool use_fast)
 {
     fps_ = fps;
 
@@ -47,7 +58,7 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
         &d3d_device_, nullptr, &d3d_ctx_);
     if (FAILED(hr))
     {
-        printf("[StreamServer] D3D11 设备创建失败, HR = 0x%08X\n", (unsigned)hr);
+        LogManager::Log("ERR", "[StreamServer] D3D11 设备创建失败, HR = 0x%08X", (unsigned)hr);
         return false;
     }
 
@@ -55,15 +66,15 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
     auto monitors = MonitorCapture::EnumerateMonitors();
     if (monitors.empty() || monitor_index >= (int)monitors.size())
     {
-        printf("[StreamServer] 显示器索引 %d 无效（共 %zu 个显示器）\n",
-               monitor_index, monitors.size());
+        LogManager::Log("ERR", "[StreamServer] 显示器索引 %d 无效（共 %zu 个显示器）",
+                        monitor_index, monitors.size());
         return false;
     }
 
-    printf("[StreamServer] 目标显示器[%d]: %s  %dx%d\n",
-           monitor_index, monitors[monitor_index].name,
-           monitors[monitor_index].rect.right - monitors[monitor_index].rect.left,
-           monitors[monitor_index].rect.bottom - monitors[monitor_index].rect.top);
+    LogManager::Log("INFO", "[StreamServer] 目标显示器[%d]: %s  %dx%d",
+                    monitor_index, monitors[monitor_index].name,
+                    monitors[monitor_index].rect.right - monitors[monitor_index].rect.left,
+                    monitors[monitor_index].rect.bottom - monitors[monitor_index].rect.top);
 
     const char* monitor_id = monitors[monitor_index].device_id;
 
@@ -72,7 +83,7 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
     if (!capture_->Init(d3d_device_, monitor_id,
                         DisplayCaptureMethod::Auto, true, false))
     {
-        printf("[StreamServer] 采集器初始化失败\n");
+        LogManager::Log("ERR", "[StreamServer] 采集器初始化失败");
         return false;
     }
 
@@ -90,20 +101,30 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
 
     if (!frame.IsValid())
     {
-        printf("[StreamServer] 首帧超时\n");
+        LogManager::Log("ERR", "[StreamServer] 首帧超时");
         return false;
     }
 
     width_ = static_cast<int>(frame.width);
     height_ = static_cast<int>(frame.height);
-    printf("[StreamServer] 首帧: %dx%d %s\n", width_, height_,
-           frame.IsGpu() ? "GPU" : "CPU");
+    LogManager::Log("INFO", "[StreamServer] 首帧: %dx%d %s",
+                    width_, height_, frame.IsGpu() ? "GPU" : "CPU");
 
-    // ---- 第五步：初始化编码器 ----
-    encoder_ = new ObsNvencEncoder();
+    // ---- 第五步：初始化编码器（按 use_fast 选择 CPU/GPU 色彩转换路线） ----
+    if (use_fast)
+    {
+        encoder_ = new ObsNvencEncoderFast();
+        LogManager::Log("INFO", "[StreamServer] 使用 GPU 硬件色彩转换 (ObsNvencEncoderFast)");
+    }
+    else
+    {
+        encoder_ = new ObsNvencEncoder();
+        LogManager::Log("INFO", "[StreamServer] 使用 CPU 软件色彩转换 (ObsNvencEncoder)");
+    }
+
     if (!encoder_->Init(d3d_device_, width_, height_, fps_, bitrate_kbps))
     {
-        printf("[StreamServer] 编码器初始化失败\n");
+        LogManager::Log("ERR", "[StreamServer] 编码器初始化失败");
         return false;
     }
 
@@ -111,7 +132,7 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
     sender_ = new VideoSender();
     if (!sender_->Init(dest_ip, port))
     {
-        printf("[StreamServer] VideoSender 初始化失败\n");
+        LogManager::Log("ERR", "[StreamServer] VideoSender 初始化失败");
         return false;
     }
 
@@ -130,8 +151,44 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
         d3d_device_->CreateTexture2D(&desc, nullptr, &upload_tex_);
     }
 
-    printf("[StreamServer] 初始化完成 -> %s:%d  %dx%d@%dfps  %dbps\n",
-           dest_ip, port, width_, height_, fps_, bitrate_kbps * 1000);
+    // ---- 第八步：初始化输入控制组件（第三阶段：TCP 控制信道 + SendInput 注入） ----
+    input_injector_ = new InputInjector();
+
+    input_server_ = new InputTransportServer();
+    if (!input_server_->Listen(ctrl_port))
+    {
+        LogManager::Log("ERR", "[StreamServer] 输入控制信道监听失败 (port %d)", ctrl_port);
+        return false;
+    }
+
+    // ---- 设置显示器信息（客户端需要此信息做正确的多显示器坐标映射） ----
+    {
+        ServerMonitorInfo info{};
+        info.capture_width = static_cast<uint16_t>(width_);
+        info.capture_height = static_cast<uint16_t>(height_);
+        info.monitor_x = static_cast<int16_t>(capture_->MonitorX());
+        info.monitor_y = static_cast<int16_t>(capture_->MonitorY());
+        info.virtual_width = static_cast<uint32_t>(GetSystemMetrics(SM_CXVIRTUALSCREEN));
+        info.virtual_height = static_cast<uint32_t>(GetSystemMetrics(SM_CYVIRTUALSCREEN));
+        input_server_->SetMonitorInfo(info);
+        LogManager::Log("INFO", "[StreamServer] 显示器信息: capture=%dx%d  offset=(%d,%d)  virtual=%dx%d",
+                        info.capture_width, info.capture_height,
+                        info.monitor_x, info.monitor_y,
+                        info.virtual_width, info.virtual_height);
+    }
+
+    // 收到客户端输入事件 → 注入到本地系统
+    input_server_->OnInputEvent = [this](const InputMessage& msg)
+    {
+        if (input_injector_)
+            input_injector_->Inject(msg);
+    };
+
+    input_server_->Start();
+    LogManager::Log("INFO", "[StreamServer] 输入控制信道已启动 (port %d)", ctrl_port);
+
+    LogManager::Log("INFO", "[StreamServer] 初始化完成 -> %s:%d  %dx%d@%dfps  %dbps  ctrl:%d",
+                    dest_ip, port, width_, height_, fps_, bitrate_kbps * 1000, ctrl_port);
     return true;
 }
 
@@ -146,7 +203,7 @@ void StreamServer::Run()
     auto frame_duration = std::chrono::microseconds(1000000 / fps_);
     uint64_t frame_index = 0;
 
-    printf("[StreamServer] 开始推流... (Ctrl+C 停止)\n");
+    LogManager::Log("INFO", "[StreamServer] 开始推流... (Ctrl+C 停止)");
 
     while (running_)
     {
@@ -158,11 +215,26 @@ void StreamServer::Run()
         CaptureFrame frame;
         if (!capture_->GetFrame(frame) || !frame.IsValid())
         {
-            // 帧未就绪，等待下一周期
+            // ---- 采集失败，记录日志（每秒一次避免刷屏） ----
+            consecutive_failures_++;
+            if (consecutive_failures_ % fps_ == 1)
+            {
+                LogManager::Log("WARN", "[StreamServer] 采集失败，连续 %d 次",
+                                consecutive_failures_);
+            }
+
             auto elapsed = std::chrono::steady_clock::now() - frame_start;
             if (elapsed < frame_duration)
                 std::this_thread::sleep_for(frame_duration - elapsed);
             continue;
+        }
+
+        // ---- 采集恢复日志 ----
+        if (consecutive_failures_ > 0)
+        {
+            LogManager::Log("INFO", "[StreamServer] 采集恢复，之前连续失败 %d 次",
+                            consecutive_failures_);
+            consecutive_failures_ = 0;
         }
 
         // ---- 第二步：获取纹理 ----
@@ -192,7 +264,9 @@ void StreamServer::Run()
         std::vector<uint8_t> h264_data;
         uint32_t timestamp = static_cast<uint32_t>(frame_index * (1000 / fps_));
 
-        if (encoder_->EncodeFrame(tex, frame_index, (frame_index == 0), h264_data)
+        if (encoder_->EncodeFrame(tex, frame_index, (frame_index == 0), h264_data,
+                                  nullptr,
+                                  capture_->MonitorX(), capture_->MonitorY())
             && !h264_data.empty())
         {
             sender_->SendFrame(h264_data.data(), (int)h264_data.size(),
@@ -202,20 +276,13 @@ void StreamServer::Run()
 
         ++frame_index;
 
-        // ---- 每秒打印一次状态 ----
-        if (frame_index % fps_ == 0)
-        {
-            printf("[StreamServer] 已推流 %llu 帧 (%.1f 秒)\n",
-                   (unsigned long long)frame_index, (double)frame_index / fps_);
-        }
-
         // ---- 帧率限制：剩余时间休眠 ----
         auto elapsed = std::chrono::steady_clock::now() - frame_start;
         if (elapsed < frame_duration)
             std::this_thread::sleep_for(frame_duration - elapsed);
     }
 
-    printf("[StreamServer] 推流结束，共 %llu 帧\n", (unsigned long long)frame_index);
+    LogManager::Log("INFO", "[StreamServer] 推流结束，共 %llu 帧", (unsigned long long)frame_index);
 }
 
 // ---- 停止主循环 ----

@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <vector>
 #include <functional>
+#include "CaptureCommon.h"                                                                   // CursorInfo（光标合成用）
+#include "IVideoEncoder.h"                                                                   // 编码器抽象接口
 
 extern "C"
 {
@@ -27,7 +29,7 @@ extern "C"
 // 对比旧 NvencEncoder：
 //   旧：直接调 nvEncCreateInputBuffer / nvEncLockInputBuffer / nvEncEncodePicture / nvEncLockBitstream
 //   新：avcodec_send_frame / avcodec_receive_packet（FFmpeg 全部封装好了）
-class ObsNvencEncoder
+class ObsNvencEncoder : public IVideoEncoder
 {
 public:
     ObsNvencEncoder();                                                  // 构造
@@ -39,27 +41,35 @@ public:
     // fps：帧率
     // bitrate_kbps：码率（如 10000 = 10Mbps）
     bool Init(ID3D11Device* d3d_device, int width, int height,
-              int fps, int bitrate_kbps);
+              int fps, int bitrate_kbps) override;                      // 初始化
 
-    void Release();                                                     // 释放所有资源
+    void Release() override;                                            // 释放所有资源
 
     // 编码一帧，返回 true 表示有码流输出
     // texture：MonitorCapture 采集到的 GPU 纹理
     // frame_index：帧序号（用于 PTS）
     // force_idr：是否强制 IDR 帧
     // out_data：输出 H.264 码流（可能为空，B 帧重排延迟）
+    // cursor：光标信息（DXGI 路线需要外部合成光标，nullptr 表示不合成）
+    // monitor_x/monitor_y：显示器屏幕偏移（将光标屏幕坐标转为纹理局部坐标）
     bool EncodeFrame(ID3D11Texture2D* texture, uint64_t frame_index,
-                     bool force_idr, std::vector<uint8_t>& out_data);
+                     bool force_idr, std::vector<uint8_t>& out_data,
+                     const CursorInfo* cursor = nullptr,
+                     int monitor_x = 0, int monitor_y = 0) override;   // 编码一帧
 
     // Flush 剩余帧（录制结束时调用）
-    void Flush(std::function<void(const std::vector<uint8_t>&)> on_packet);
+    void Flush(std::function<void(const std::vector<uint8_t>&)> on_packet) override;  // 刷新
 
-    bool IsReady() const { return codec_ctx_ != nullptr; }
+    bool IsReady() const override { return codec_ctx_ != nullptr; }
 
 private:
     bool CreateStagingTexture();                                        // 创建 CPU 可读的 staging 纹理
     bool CreateSwsContext();                                            // 创建 BGRA→NV12 色彩转换上下文
-    bool GpuTextureToNv12(ID3D11Texture2D* texture);                    // GPU 纹理 → CPU NV12
+    bool GpuTextureToNv12(ID3D11Texture2D* texture,                     // GPU 纹理 → CPU NV12
+                          const CursorInfo* cursor = nullptr,
+                          int monitor_x = 0, int monitor_y = 0);
+    void DrawCursorOnBuffer(uint8_t* bgra, int buf_w, int buf_h,       // 在 BGRA 缓冲上合成光标
+                            const CursorInfo* cursor, int monitor_x, int monitor_y);
 
     // ---- D3D11（外部拥有 device，内部拥有 staging） ----
     ID3D11Device* d3d_device_{nullptr};
@@ -76,6 +86,7 @@ private:
     SwsContext* sws_ctx_{nullptr};                                      // BGRA→NV12
     uint8_t* nv12_data_{nullptr};                                       // NV12 数据缓冲
     int nv12_linesize_{0};                                              // NV12 行间距
+    std::vector<uint8_t> bgra_buffer_;                                  // 可写 BGRA 缓冲（光标合成用）
 
     // ---- 参数 ----
     int width_{0};

@@ -1,4 +1,4 @@
-#ifndef STREAMSERVER_H
+﻿#ifndef STREAMSERVER_H
 #define STREAMSERVER_H
 
 #include <cstdint>
@@ -8,17 +8,20 @@ struct ID3D11Device;
 struct ID3D11DeviceContext;
 struct ID3D11Texture2D;
 class MonitorCapture;
-class ObsNvencEncoder;
+class IVideoEncoder;
 class VideoSender;
+class InputTransportServer;
+class InputInjector;
 
 // 服务器模式：桌面采集 → NVENC 编码 → UDP 发送
+// 第三阶段：TCP 控制信道接收输入事件 → SendInput 注入
 // 不依赖 Qt 事件循环，直接在 main() 中阻塞运行
-// 用法：Player.exe --server --port 47998 --monitor 1 --ip 127.0.0.1
+// 用法：Player.exe --server --port 47998 --monitor 1 --ip 127.0.0.1 --ctrl-port 47989
 class StreamServer
 {
 public:
-    StreamServer();                                                                                   // 构造
-    ~StreamServer();                                                                                  // 析构
+    StreamServer();                                                                                     // 构造
+    ~StreamServer();                                                                                    // 析构
 
     // 初始化所有组件
     // port：UDP 目标端口
@@ -26,32 +29,41 @@ public:
     // dest_ip：目标 IP（默认 127.0.0.1）
     // fps：采集/编码帧率
     // bitrate_kbps：码率（如 10000 = 10Mbps）
-    bool Init(uint16_t port, int monitor_index,                                                       // 初始化
+    // ctrl_port：TCP 控制信道端口（如 47989）
+    // use_fast：true=GPU 硬件色彩转换(ObsNvencEncoderFast)，false=CPU sws_scale(ObsNvencEncoder)
+    bool Init(uint16_t port, int monitor_index,                                                         // 初始化
               const char* dest_ip = "127.0.0.1",
-              int fps = 60, int bitrate_kbps = 10000);
+              int fps = 60, int bitrate_kbps = 10000,
+              uint16_t ctrl_port = 47989,
+              bool use_fast = false);
 
-    void Run();                                                                                       // 主循环（阻塞），按帧率采集→编码→发送
-    void Stop();                                                                                      // 停止主循环
+    void Run();                                                                                         // 主循环（阻塞），按帧率采集→编码→发送
+    void Stop();                                                                                        // 停止主循环
 
 private:
     // ---- D3D11 ----
-    ID3D11Device* d3d_device_{nullptr};                                                               // D3D11 设备
-    ID3D11DeviceContext* d3d_ctx_{nullptr};                                                           // D3D11 设备上下文
+    ID3D11Device* d3d_device_{nullptr};                                                                 // D3D11 设备
+    ID3D11DeviceContext* d3d_ctx_{nullptr};                                                             // D3D11 设备上下文
 
-    // ---- 组件 ----
-    MonitorCapture* capture_{nullptr};                                                                // 桌面采集器
-    ObsNvencEncoder* encoder_{nullptr};                                                               // NVENC 编码器
-    VideoSender* sender_{nullptr};                                                                    // UDP 发送器
+    // ---- 视频组件 ----
+    MonitorCapture* capture_{nullptr};                                                                  // 桌面采集器
+    IVideoEncoder* encoder_{nullptr};                                                                   // NVENC 编码器（指向 ObsNvencEncoder 或 ObsNvencEncoderFast）
+    VideoSender* sender_{nullptr};                                                                      // UDP 发送器
+
+    // ---- 第三阶段：输入控制组件 ----
+    InputTransportServer* input_server_{nullptr};                                                       // TCP 输入接收器
+    InputInjector* input_injector_{nullptr};                                                            // 输入注入器
 
     // ---- GDI 路线上传纹理 ----
-    ID3D11Texture2D* upload_tex_{nullptr};                                                            // CPU→GPU 上传用纹理（GDI 路线）
+    ID3D11Texture2D* upload_tex_{nullptr};                                                              // CPU→GPU 上传用纹理（GDI 路线）
 
     // ---- 参数 ----
-    int fps_{60};                                                                                     // 帧率
-    int width_{0};                                                                                    // 画面宽度
-    int height_{0};                                                                                   // 画面高度
+    int fps_{60};                                                                                       // 帧率
+    int width_{0};                                                                                      // 画面宽度
+    int height_{0};                                                                                     // 画面高度
 
-    std::atomic<bool> running_{false};                                                                // 运行标志
+    std::atomic<bool> running_{false};                                                                  // 运行标志
+    int consecutive_failures_{0};                                                                       // 连续采集失败计数
 };
 
 #endif // STREAMSERVER_H

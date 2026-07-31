@@ -44,7 +44,7 @@ private:
     void CreateStreamUI();                                      // 创建 StreamWindow
     void CreateStreamPlayer();                                  // 创建 FFmpegPlayer 并绑定到 StreamWindow
     void BindStreamSignals();                                   // 绑定串流关闭信号
-    void OpenStream(uint16_t port, int width, int height, int fps);    // 打开网络串流并自动播放
+    void OpenStream(uint16_t port, int fps);                              // 打开网络串流并自动播放
 
 private:
     // ==== 当前模式的窗口（二选一） ====

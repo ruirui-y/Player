@@ -1,4 +1,4 @@
-#include "PlayerApp.h"
+﻿#include "PlayerApp.h"
 #include "Client/MainUI/MainWindow.h"
 #include "Client/MainUI/VideoWidget.h"
 #include "Client/MainUI/ControlBar.h"
@@ -8,6 +8,7 @@
 #include "Client/Core/FFmpegPlayer.h"
 #include "Server/OBS_Capture/MonitorCapture.h"
 #include "Server/OBS_Capture/ObsNvencEncoder.h"
+#include "Server/OBS_Capture/ObsNvencEncoderFast.h"
 #include <d3d11.h>
 extern "C"
 {
@@ -73,33 +74,48 @@ bool PlayerApp::Init(int argc, char* argv[])
     LoadStyle();
 
     // ---- 检测串流模式 ----
-    // 用法：Player.exe --stream --port 47998 --width 1920 --height 1080 --fps 60
+    // 用法：Player.exe --stream --port 47998 --fps 60
+    // 分辨率不需要指定：服务端发什么分辨率，客户端就显示什么分辨率
+    // H.264 码流的 SPS 中包含分辨率信息，解码器自动解析
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--stream") == 0)
         {
             uint16_t port = 47998;
-            int width = 1920;
-            int height = 1080;
             int fps = 60;
+            uint16_t ctrl_port = 47989;
 
             for (int j = i + 1; j < argc; ++j)
             {
                 if (std::strcmp(argv[j], "--port") == 0 && j + 1 < argc)
                     port = (uint16_t)std::atoi(argv[++j]);
-                else if (std::strcmp(argv[j], "--width") == 0 && j + 1 < argc)
-                    width = std::atoi(argv[++j]);
-                else if (std::strcmp(argv[j], "--height") == 0 && j + 1 < argc)
-                    height = std::atoi(argv[++j]);
                 else if (std::strcmp(argv[j], "--fps") == 0 && j + 1 < argc)
                     fps = std::atoi(argv[++j]);
+                else if (std::strcmp(argv[j], "--ctrl-port") == 0 && j + 1 < argc)
+                    ctrl_port = (uint16_t)std::atoi(argv[++j]);
             }
 
             is_streaming_ = true;
             CreateStreamUI();
             CreateStreamPlayer();
             BindStreamSignals();
-            OpenStream(port, width, height, fps);
+            OpenStream(port, fps);
+
+            // ---- 第三阶段：延迟启动输入转发 ----
+            // 等 VideoReceiver 收到第一个 UDP 包后，自动获取服务端 IP
+            // 不再依赖命令行 --ip 参数（两台设备时用户可能忘记传）
+            QTimer* input_timer = new QTimer(this);
+            QObject::connect(input_timer, &QTimer::timeout, this, [this, input_timer, ctrl_port]()
+                {
+                    std::string sender_ip = player_->GetSenderIP();
+                    if (!sender_ip.empty())
+                    {
+                        input_timer->stop();
+                        input_timer->deleteLater();
+                        stream_window_->StartInput(sender_ip.c_str(), ctrl_port);
+                    }
+                });
+            input_timer->start(500);   // 每 500ms 检查一次，直到收到视频流
             return true;
         }
     }
@@ -108,6 +124,7 @@ bool PlayerApp::Init(int argc, char* argv[])
     CreatePlayerUI();
     CreatePlayer();
     BindPlayerSignals();
+    TestScreenCapture();
     return true;
 }
 
@@ -347,7 +364,7 @@ void PlayerApp::OnSelectFile()
 // 测试桌面捕获 + NVENC 编码（FFmpeg 架构）
 void PlayerApp::TestScreenCapture()
 {
-    qDebug() << "[PlayerApp] 开始录制 10 秒（MonitorCapture + FFmpeg NVENC）";
+    qDebug() << "[PlayerApp] 开始录制 10 秒（MonitorCapture + FFmpeg NVENC Fast）";
 
     // ---- 第一步：创建 D3D11 设备 ----
     D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
@@ -382,8 +399,13 @@ void PlayerApp::TestScreenCapture()
             << monitors[i].rect.bottom - monitors[i].rect.top;
     }
 
-    const char* monitor_id = monitors[1].device_id;
-    qDebug() << "[PlayerApp] 目标:" << monitors[1].name;
+    // 注意：这里 monitors[1] 是您原来的逻辑，请确保索引有效
+    if (monitors.size() < 2) {
+        qDebug() << "[PlayerApp] 未找到第二个显示器，尝试使用第一个";
+        if (monitors.empty()) return;
+    }
+    const char* monitor_id = monitors.size() > 1 ? monitors[1].device_id : monitors[0].device_id;
+    qDebug() << "[PlayerApp] 目标:" << (monitors.size() > 1 ? monitors[1].name : monitors[0].name);
 
     // ---- 第三步：初始化采集器 ----
     MonitorCapture capture;
@@ -424,8 +446,8 @@ void PlayerApp::TestScreenCapture()
     qDebug() << "[PlayerApp] 首帧:" << width << "x" << height
         << (frame.IsGpu() ? "GPU" : "CPU");
 
-    // ---- 第五步：初始化编码器 ----
-    ObsNvencEncoder encoder;
+    // ---- 第五步：初始化编码器 (修改点：使用 Fast 版本) ----
+    ObsNvencEncoderFast encoder;
     if (!encoder.Init(d3d_device, width, height, fps, 10000))
     {
         qDebug() << "[PlayerApp] 编码器初始化失败";
@@ -437,7 +459,7 @@ void PlayerApp::TestScreenCapture()
 
     // ---- 第六步：打开输出文件 ----
     FILE* fp = nullptr;
-    fopen_s(&fp, "capture_10s.h264", "wb");
+    fopen_s(&fp, "capture_10s_fast.h264", "wb"); // 改个文件名以示区分
     if (!fp)
     {
         qDebug() << "[PlayerApp] 文件创建失败";
@@ -448,7 +470,7 @@ void PlayerApp::TestScreenCapture()
         return;
     }
 
-    // ---- 第七步：GDI 路线需要上传纹理 ----
+    // ---- 第七步：GDI 路线需要上传纹理 (修改点：增加 BindFlags) ----
     ID3D11Texture2D* upload_tex = nullptr;
     if (!frame.IsGpu())
     {
@@ -460,7 +482,35 @@ void PlayerApp::TestScreenCapture()
         desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         desc.SampleDesc.Count = 1;
         desc.Usage = D3D11_USAGE_DEFAULT;
+
+        // 【关键修改】必须添加 BIND_SHADER_RESOURCE 或 BIND_VIDEO_PROCESSOR
+        // 否则 VideoProcessorInputView 创建会失败
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
         d3d_device->CreateTexture2D(&desc, nullptr, &upload_tex);
+    }
+
+    if (frame.IsValid())
+    {
+        int width = static_cast<int>(frame.width);
+        int height = static_cast<int>(frame.height);
+        qDebug() << "[PlayerApp] 首帧:" << width << "x" << height
+            << (frame.IsGpu() ? "GPU" : "CPU");
+
+        if (frame.IsGpu())
+        {
+            ID3D11Texture2D* tex = frame.gpu_texture;
+            D3D11_TEXTURE2D_DESC desc;
+            tex->GetDesc(&desc);  // 需要传入参数
+            DXGI_FORMAT format = desc.Format;
+            qDebug() << "[PlayerApp] 输入 GPU 纹理格式:" << format;
+
+            // 检查是否为BT.601或BT.709
+            if (format == DXGI_FORMAT_B8G8R8A8_UNORM)
+                qDebug() << "[PlayerApp] 输入可能是sRGB (BT.709)";
+            else if (format == DXGI_FORMAT_YUY2)
+                qDebug() << "[PlayerApp] 输入可能是BT.601 (YUY2)";
+        }
     }
 
     // ---- 第八步：主循环 ----
@@ -520,8 +570,9 @@ void PlayerApp::TestScreenCapture()
     d3d_ctx->Release();
     d3d_device->Release();
 
-    qDebug() << "[PlayerApp] 完成:" << written << "帧 → capture_10s.h264";
+    qDebug() << "[PlayerApp] 完成:" << written << "帧 → capture_10s_fast.h264";
 }
+
 
 // ================================================================
 // ============== 串流客户端模式 ==============
@@ -573,13 +624,13 @@ void PlayerApp::BindStreamSignals()
         });
 }
 
-void PlayerApp::OpenStream(uint16_t port, int width, int height, int fps)
+void PlayerApp::OpenStream(uint16_t port, int fps)
 {
     stream_window_->SetStatusText(
-        QString(u8"等待连接... 端口 %1  %2x%3@%4fps")
-            .arg(port).arg(width).arg(height).arg(fps));
+        QString(u8"等待连接... 端口 %1  @%2fps")
+            .arg(port).arg(fps));
 
-    if (!player_->OpenStream(port, width, height, fps))
+    if (!player_->OpenStream(port, fps))
     {
         qDebug() << "[PlayerApp] 串流启动失败，端口" << port;
         stream_window_->SetStatusText(u8"连接失败");
@@ -589,5 +640,5 @@ void PlayerApp::OpenStream(uint16_t port, int width, int height, int fps)
     player_->Play();
 
     qDebug() << "[PlayerApp] 串流模式启动，端口" << port
-             << width << "x" << height << "@" << fps << "fps";
+             << "@" << fps << "fps";
 }

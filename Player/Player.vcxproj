@@ -74,13 +74,15 @@
     </Link>
     <ClCompile>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions>NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NOMINMAX;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <PreprocessorDefinitions>NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NOMINMAX;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;d3d11.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -132,6 +134,7 @@
     <ClCompile Include="Client\StreamUI\StreamWindow.cpp" />
     <ClCompile Include="Client\Core\VideoDecoder.cpp" />
     <ClCompile Include="Client\MainUI\MainWindow.cpp" />
+    <ClCompile Include="Server\OBS_Capture\ObsNvencEncoderFast.cpp" />
     <ClCompile Include="Server\OBS_Capture\CursorCapture.cpp" />
     <ClCompile Include="Server\OBS_Capture\DcCapture.cpp" />
     <ClCompile Include="Server\OBS_Capture\DxgiDuplicator.cpp" />
@@ -146,6 +149,10 @@
     <ClCompile Include="Common\WorkerThread.cpp" />
     <ClCompile Include="Common\NetWork\VideoSender.cpp" />
     <ClCompile Include="Common\NetWork\VideoReceiver.cpp" />
+    <ClCompile Include="Common\Input\InputCollector.cpp" />
+    <ClCompile Include="Common\Input\InputInjector.cpp" />
+    <ClCompile Include="Common\Input\InputTransport.cpp" />
+    <ClCompile Include="Common\LogManager.cpp" />
     <QtRcc Include="Player.qrc" />
     <QtUic Include="Player.ui" />
   </ItemGroup>
@@ -159,8 +166,15 @@
     <ClInclude Include="Common\NetWork\NalUnit.h" />
     <ClInclude Include="Common\NetWork\VideoSender.h" />
     <ClInclude Include="Common\NetWork\VideoReceiver.h" />
+    <ClInclude Include="Common\Input\InputCollector.h" />
+    <ClInclude Include="Common\Input\InputInjector.h" />
+    <ClInclude Include="Common\Input\InputTransport.h" />
+    <ClInclude Include="Common\Input\InputEvent.h" />
+    <ClInclude Include="Common\LogManager.h" />
     <ClInclude Include="Client\Core\Reader.h" />
     <ClInclude Include="Client\Core\VideoDecoder.h" />
+    <ClInclude Include="Server\OBS_Capture\ObsNvencEncoderFast.h" />
+    <ClInclude Include="Server\OBS_Capture\IVideoEncoder.h" />
     <ClInclude Include="Server\OBS_Capture\CaptureCommon.h" />
     <ClInclude Include="Server\OBS_Capture\CursorCapture.h" />
     <ClInclude Include="Server\OBS_Capture\DcCapture.h" />
