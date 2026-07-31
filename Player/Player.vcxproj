@@ -69,7 +69,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
-      <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;d3d11.lib;dxguid.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;d3d11.lib;dxguid.lib;dxgi.lib;d3dcompiler.lib;opus.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
     </Link>
     <ClCompile>
@@ -85,7 +85,7 @@
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;d3d11.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>avformat.lib;avcodec.lib;avutil.lib;swscale.lib;swresample.lib;d3d11.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;opus.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
     </Link>
   </ItemDefinitionGroup>
@@ -120,6 +120,7 @@
   <ItemGroup>
     <ClCompile Include="Client\Core\AudioDecoder.cpp" />
     <ClCompile Include="Client\Core\AudioRenderer.cpp" />
+    <ClCompile Include="Client\Core\StreamAudioRenderer.cpp" />
     <ClCompile Include="Client\Core\FFmpegPlayer.cpp" />
     <ClCompile Include="Client\Core\D3D11Pipeline.cpp" />
     <ClCompile Include="Client\Core\Nv12GpuUploader.cpp" />
@@ -134,6 +135,8 @@
     <ClCompile Include="Client\StreamUI\StreamWindow.cpp" />
     <ClCompile Include="Client\Core\VideoDecoder.cpp" />
     <ClCompile Include="Client\MainUI\MainWindow.cpp" />
+    <ClCompile Include="Server\AudioCapture\WasapiCapture.cpp" />
+    <ClCompile Include="Server\AudioCapture\OpusAudioEncoder.cpp" />
     <ClCompile Include="Server\OBS_Capture\ObsNvencEncoderFast.cpp" />
     <ClCompile Include="Server\OBS_Capture\CursorCapture.cpp" />
     <ClCompile Include="Server\OBS_Capture\DcCapture.cpp" />
@@ -149,6 +152,8 @@
     <ClCompile Include="Common\WorkerThread.cpp" />
     <ClCompile Include="Common\NetWork\VideoSender.cpp" />
     <ClCompile Include="Common\NetWork\VideoReceiver.cpp" />
+    <ClCompile Include="Common\NetWork\AudioSender.cpp" />
+    <ClCompile Include="Common\NetWork\AudioReceiver.cpp" />
     <ClCompile Include="Common\Input\InputCollector.cpp" />
     <ClCompile Include="Common\Input\InputInjector.cpp" />
     <ClCompile Include="Common\Input\InputTransport.cpp" />
@@ -166,6 +171,8 @@
     <ClInclude Include="Common\NetWork\NalUnit.h" />
     <ClInclude Include="Common\NetWork\VideoSender.h" />
     <ClInclude Include="Common\NetWork\VideoReceiver.h" />
+    <ClInclude Include="Common\NetWork\AudioSender.h" />
+    <ClInclude Include="Common\NetWork\AudioReceiver.h" />
     <ClInclude Include="Common\Input\InputCollector.h" />
     <ClInclude Include="Common\Input\InputInjector.h" />
     <ClInclude Include="Common\Input\InputTransport.h" />
@@ -173,6 +180,8 @@
     <ClInclude Include="Common\LogManager.h" />
     <ClInclude Include="Client\Core\Reader.h" />
     <ClInclude Include="Client\Core\VideoDecoder.h" />
+    <ClInclude Include="Server\AudioCapture\WasapiCapture.h" />
+    <ClInclude Include="Server\AudioCapture\OpusAudioEncoder.h" />
     <ClInclude Include="Server\OBS_Capture\ObsNvencEncoderFast.h" />
     <ClInclude Include="Server\OBS_Capture\IVideoEncoder.h" />
     <ClInclude Include="Server\OBS_Capture\CaptureCommon.h" />
@@ -193,6 +202,7 @@
     <QtMoc Include="Client\StreamUI\StreamWindow.h" />
     <QtMoc Include="Common\WorkerThread.h" />
     <QtMoc Include="Client\Core\AudioRenderer.h" />
+    <QtMoc Include="Client\Core\StreamAudioRenderer.h" />
     <ClInclude Include="Client\Core\D3D11Pipeline.h" />
     <ClInclude Include="Client\Core\Nv12GpuUploader.h" />
     <QtMoc Include="Client\Core\VideoRenderer.h" />
@@ -214,6 +224,8 @@
     <None Include="Notes\MoonLight\基于 FFmpeg nvenc.c 做录屏迁移.md" />
     <None Include="Notes\MoonLight\基于OBS的屏幕捕获.md" />
     <None Include="Notes\MoonLight\桌面捕获.md" />
+    <None Include="Notes\MoonLight\第二阶段笔记：UDP网络传输与客户端解码.md" />
+    <None Include="Notes\MoonLight\输入事件转发系统技术文档.md" />
     <None Include="Notes\从 CPU 到 GPU 的演进总结.md" />
     <None Include="Notes\基于ffplay的音视频同步改造.md" />
     <None Include="Notes\大纲.md" />

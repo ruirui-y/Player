@@ -29,196 +29,241 @@
     <QtUic Include="Player.ui">
       <Filter>Form Files</Filter>
     </QtUic>
-    <QtMoc Include="MainUI\MainWindow.h">
-      <Filter>Header Files</Filter>
-    </QtMoc>
-    <ClCompile Include="MainUI\MainWindow.cpp">
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Client\Core\AudioDecoder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\Core\AudioRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\Core\StreamAudioRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\Core\FFmpegPlayer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\Core\D3D11Pipeline.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\Core\Nv12GpuUploader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\Core\SoftwareRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\Core\VideoRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\Core\Reader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\MainUI\ControlBar.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\MainUI\FileBrowser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\MainUI\TitleBar.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\MainUI\VideoWidget.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\StreamUI\StreamVideoWidget.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\StreamUI\StreamWindow.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\Core\VideoDecoder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\MainUI\MainWindow.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\OBS_Capture\ObsNvencEncoderFast.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\OBS_Capture\CursorCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\OBS_Capture\DcCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\OBS_Capture\DxgiDuplicator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\OBS_Capture\MonitorCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\OBS_Capture\ObsNvencEncoder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\OBS_Capture\WgcCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\OBS_Capture\WindowCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\StreamServer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="App\PlayerApp.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="App\main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\TcpServer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\WorkerThread.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\NetWork\VideoSender.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\NetWork\VideoReceiver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\Input\InputCollector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\Input\InputInjector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\Input\InputTransport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\LogManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="TCP\TcpServer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\D3D11Pipeline.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\Nv12GpuUploader.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\SoftwareRenderer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\FFmpegPlayer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\AudioRenderer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\VideoRenderer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\Reader.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Thread\WorkerThread.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\VideoDecoder.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Core\AudioDecoder.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="MainUI\VideoWidget.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="MainUI\ControlBar.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="PlayerApp.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="MainUI\TitleBar.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="MainUI\FileBrowser.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Capture\ScreenCapture.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Capture\NvencEncoder.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Capture\NvEncLibrary.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Capture\NvEncSurfacePool.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Capture\NvEncSession.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="OBS_Capture\CursorCapture.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="OBS_Capture\DcCapture.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="OBS_Capture\DxgiDuplicator.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="OBS_Capture\MonitorCapture.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="OBS_Capture\WgcCapture.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="OBS_Capture\WindowCapture.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="OBS_Capture\ObsNvencEncoder.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <QtMoc Include="TCP\TcpServer.h">
+    <QtMoc Include="Common\TcpServer.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="Core\SoftwareRenderer.h">
+    <QtMoc Include="Client\MainUI\FileBrowser.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="Core\FFmpegPlayer.h">
+    <QtMoc Include="Client\MainUI\TitleBar.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="Thread\WorkerThread.h">
+    <QtMoc Include="App\PlayerApp.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="Core\AudioRenderer.h">
+    <QtMoc Include="Client\MainUI\ControlBar.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="Core\VideoRenderer.h">
+    <QtMoc Include="Client\MainUI\VideoWidget.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="MainUI\VideoWidget.h">
+    <QtMoc Include="Client\StreamUI\StreamVideoWidget.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="MainUI\ControlBar.h">
+    <QtMoc Include="Client\StreamUI\StreamWindow.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="PlayerApp.h">
+    <QtMoc Include="Common\WorkerThread.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="MainUI\TitleBar.h">
+    <QtMoc Include="Client\Core\AudioRenderer.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="MainUI\FileBrowser.h">
+    <QtMoc Include="Client\Core\StreamAudioRenderer.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="Client\Core\VideoRenderer.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="Client\Core\SoftwareRenderer.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="Client\Core\FFmpegPlayer.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="Client\MainUI\MainWindow.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Core\D3D11Pipeline.h">
+    <ClInclude Include="Client\Core\AudioDecoder.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Core\Nv12GpuUploader.h">
+    <ClInclude Include="Common\ClockUtil.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Core\SafeQueue.h">
+    <ClInclude Include="Common\SafeQueue.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Core\Reader.h">
+    <ClInclude Include="Common\NetWork\NalUnit.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Core\VideoDecoder.h">
+    <ClInclude Include="Common\NetWork\VideoSender.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Core\AudioDecoder.h">
+    <ClInclude Include="Common\NetWork\VideoReceiver.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Core\ClockUtil.h">
+    <ClInclude Include="Common\Input\InputCollector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Capture\ScreenCapture.h">
+    <ClInclude Include="Common\Input\InputInjector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Capture\NvencEncoder.h">
+    <ClInclude Include="Common\Input\InputTransport.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Capture\NvEncLibrary.h">
+    <ClInclude Include="Common\Input\InputEvent.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Capture\NvEncSurfacePool.h">
+    <ClInclude Include="Common\LogManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Capture\NvEncSession.h">
+    <ClInclude Include="Client\Core\Reader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="OBS_Capture\CaptureCommon.h">
+    <ClInclude Include="Client\Core\VideoDecoder.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="OBS_Capture\CursorCapture.h">
+    <ClInclude Include="Server\OBS_Capture\ObsNvencEncoderFast.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="OBS_Capture\DcCapture.h">
+    <ClInclude Include="Server\OBS_Capture\IVideoEncoder.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="OBS_Capture\DxgiDuplicator.h">
+    <ClInclude Include="Server\OBS_Capture\CaptureCommon.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="OBS_Capture\MonitorCapture.h">
+    <ClInclude Include="Server\OBS_Capture\CursorCapture.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="OBS_Capture\WgcCapture.h">
+    <ClInclude Include="Server\OBS_Capture\DcCapture.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="OBS_Capture\WindowCapture.h">
+    <ClInclude Include="Server\OBS_Capture\DxgiDuplicator.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="OBS_Capture\ObsNvencEncoder.h">
+    <ClInclude Include="Server\OBS_Capture\MonitorCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Server\OBS_Capture\ObsNvencEncoder.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Server\OBS_Capture\WgcCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Server\OBS_Capture\WindowCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Server\StreamServer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Client\Core\D3D11Pipeline.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Client\Core\Nv12GpuUploader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -238,5 +283,10 @@
     <None Include="QSS\style.qss" />
     <None Include="Notes\MoonLight\Moonlight 学习笔记：从零实现低延迟桌面串流.md" />
     <None Include="Notes\MoonLight\桌面捕获.md" />
+    <None Include="Notes\MoonLight\基于 FFmpeg nvenc.c 做录屏迁移.md" />
+    <None Include="Notes\MoonLight\基于OBS的屏幕捕获.md" />
+    <None Include="Notes\用户交互.md" />
+    <None Include="Notes\MoonLight\第二阶段笔记：UDP网络传输与客户端解码.md" />
+    <None Include="Notes\MoonLight\输入事件转发系统技术文档.md" />
   </ItemGroup>
 </Project>
