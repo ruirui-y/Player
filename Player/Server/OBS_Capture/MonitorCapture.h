@@ -35,6 +35,8 @@ public:
     uint32_t Height() const;                                            // 帧高度
     DisplayCaptureMethod Method() const;                                // 当前采集方法
     bool IsActive() const;                                              // 是否正在采集
+    int MonitorX() const { return monitor_x_; }                        // 显示器屏幕 X 偏移（光标合成用）
+    int MonitorY() const { return monitor_y_; }                        // 显示器屏幕 Y 偏移（光标合成用）
 
     // 静态方法：枚举所有显示器
     static std::vector<MonitorInfo> EnumerateMonitors();

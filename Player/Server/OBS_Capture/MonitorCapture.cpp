@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <QDebug>
+#include "Common/LogManager.h"
 
 // ========== 辅助：显示器枚举回调数据 ==========
 
@@ -446,12 +447,18 @@ void MonitorCapture::Tick(float delta_seconds)
                     UpdateMonitorHandle();
                     if (handle_)
                     {
-                        dxgi_.Init(device_, handle_);
+                        if (!dxgi_.Init(device_, handle_))
+                        {
+                            LogManager::Log("WARN", "[MonitorCapture] DXGI 重建失败（显示器句柄无效）");
+                        }
                     }
                 }
                 else
                 {
-                    dxgi_.Init(device_, handle_);
+                    if (!dxgi_.Init(device_, handle_))
+                    {
+                        LogManager::Log("WARN", "[MonitorCapture] DXGI 重建失败");
+                    }
                 }
 
                 reset_timeout_ = 0.0f;
@@ -462,15 +469,20 @@ void MonitorCapture::Tick(float delta_seconds)
         if (dxgi_.IsActive())
         {
             // ---- 采集光标（DXGI 路线需要外部光标合成） ----
-            if (capture_cursor_)
-            {
-                cursor_.Capture();
-            }
+            //if (capture_cursor_)
+            //{
+            //    cursor_.Capture();
+            //}
 
             // ---- 更新帧，失败时释放资源等待重试 ----
             if (!dxgi_.UpdateFrame())
             {
-                FreeCaptureData();
+                // ---- DXGI 失效 → 只重建 DXGI，不调用 FreeCaptureData ----
+                // 保留 width_/height_/monitor_x_/monitor_y_ 等状态，避免恢复后尺寸归零
+                // 立即尝试重建，不等待 3 秒（减少推流中断时间）
+                LogManager::Log("WARN", "[MonitorCapture] DXGI UpdateFrame 失败，立即重建");
+                dxgi_.Shutdown();
+                dxgi_.Init(device_, handle_);
             }
             else if (width_ == 0)
             {

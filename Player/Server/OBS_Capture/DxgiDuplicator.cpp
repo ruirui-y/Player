@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <QDebug>
+#include "Common/LogManager.h"
 
 // ========== 静态方法：将 HMONITOR 映射到 DXGI output 索引 ==========
 
@@ -233,13 +234,26 @@ bool DxgiDuplicator::UpdateFrame(uint32_t timeout_ms)
 
     if (hr == DXGI_ERROR_WAIT_TIMEOUT)
     {
-        // 超时是正常的，桌面没有变化 → 保留上一帧纹理，返回 true
-        return true;
+        // ---- 超时是正常的，桌面没有变化 → 保留上一帧纹理 ----
+        // 但如果是重建后首帧（target_texture_ 为空），用更大超时再试一次
+        if (!target_texture_)
+        {
+            LogManager::Log("DBG", "[DxgiDuplicator] 重建后首帧，等待桌面变化...");
+            hr = duplication_->AcquireNextFrame(500, &frame_info, &resource);
+            if (hr == DXGI_ERROR_WAIT_TIMEOUT)
+                return true;                                            // 仍然没有变化，等待下次 Tick
+            // 获取到了帧或出错 → 继续往下处理
+        }
+        else
+        {
+            return true;                                                // 保留上一帧
+        }
     }
 
     if (hr == DXGI_ERROR_ACCESS_LOST)
     {
-        // 访问丢失 → 需要重建 duplication
+        // ---- 访问丢失 → 需要重建 duplication ----
+        LogManager::Log("WARN", "[DxgiDuplicator] DXGI_ERROR_ACCESS_LOST，需要重建");
         active_ = false;
         ReleaseFrame();
         return false;
@@ -247,6 +261,8 @@ bool DxgiDuplicator::UpdateFrame(uint32_t timeout_ms)
 
     if (FAILED(hr) || !resource)
     {
+        LogManager::Log("WARN", "[DxgiDuplicator] AcquireNextFrame 失败, HR=0x%08X",
+                        (unsigned)hr);
         ReleaseFrame();
         return false;
     }

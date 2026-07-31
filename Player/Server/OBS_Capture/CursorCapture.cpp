@@ -1,236 +1,132 @@
-#include "CursorCapture.h"
+﻿#include "CursorCapture.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <QDebug>
 
-// ========== 辅助函数：读取 GDI 位图原始数据 ==========
+// ==========
+// 用 DrawIconEx 将光标绘制到 BGRA 位图
+//
+// 为什么是这个方案：
+//   旧方案用 GetIconInfo + 手动解析 ICONINFO 的 hbmColor/hbmMask 位图，
+//   需要处理彩色/单色/Alpha/无Alpha 四种情况，容易出错。
+//   DrawIconEx 是 Windows 系统光标渲染函数，内部处理了所有格式，
+//   直接输出到 32-bit BGRA 位图，比手动解析可靠得多。
+// 底层是什么：
+//   DrawIconEx → GDI32.dll → win32kfull.sys 内核光标渲染管线
+//   内核知道当前光标的所有格式细节，不需要用户态手动解析
+// ==========
 
-std::vector<uint8_t> CursorCapture::GetBitmapData(HBITMAP hbmp, BITMAP& bmp)
+bool CursorCapture::CaptureViaDrawIconEx(HICON icon, uint32_t& out_w, uint32_t& out_h,
+                                         std::vector<uint8_t>& out_bgra)
 {
-    if (GetObject(hbmp, sizeof(bmp), &bmp) == 0)
+    if (!icon)
+        return false;
+
+    // ---- 第一步：获取光标尺寸和热点 ----
+    ICONINFO ii;
+    if (!GetIconInfo(icon, &ii))
+        return false;
+
+    BITMAP bm;
+    if (ii.hbmColor)
     {
-        return {};
+        GetObject(ii.hbmColor, sizeof(bm), &bm);
     }
-
-    unsigned int size = bmp.bmHeight * bmp.bmWidthBytes;
-    if (size == 0)
+    else if (ii.hbmMask)
     {
-        return {};
-    }
-
-    std::vector<uint8_t> output(size);
-    if (GetBitmapBits(hbmp, size, output.data()) == 0)
-    {
-        return {};
-    }
-
-    return output;
-}
-
-// ========== 辅助函数：位掩码转 Alpha ==========
-
-static inline uint8_t BitToAlpha(const uint8_t* data, long pixel, bool invert)
-{
-    uint8_t pix_byte = data[pixel / 8];
-    bool alpha = (pix_byte >> (7 - pixel % 8) & 1) != 0;
-
-    if (invert)
-    {
-        return alpha ? 0xFF : 0;
+        GetObject(ii.hbmMask, sizeof(bm), &bm);
+        bm.bmHeight /= 2;                                            // 单色掩码高度是两倍
     }
     else
     {
-        return alpha ? 0 : 0xFF;
-    }
-}
-
-// ========== 辅助函数：检测彩色位图是否有 Alpha 通道 ==========
-
-static inline bool BitmapHasAlpha(const uint8_t* data, long num_pixels)
-{
-    for (long i = 0; i < num_pixels; i++)
-    {
-        if (data[i * 4 + 3] != 0)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-// ========== 辅助函数：将 AND 掩码应用到 Alpha 通道 ==========
-
-void CursorCapture::ApplyMask(uint8_t* color, const uint8_t* mask, const BITMAP& bmp_mask)
-{
-    for (long y = 0; y < bmp_mask.bmHeight; y++)
-    {
-        for (long x = 0; x < bmp_mask.bmWidth; x++)
-        {
-            long mask_pix_offs = y * (bmp_mask.bmWidthBytes * 8) + x;
-            color[(y * bmp_mask.bmWidth + x) * 4 + 3] = BitToAlpha(mask, mask_pix_offs, false);
-        }
-    }
-}
-
-// ========== 从彩色位图提取 BGRA ==========
-
-std::vector<uint8_t> CursorCapture::CopyFromColor(ICONINFO& ii, uint32_t& width, uint32_t& height)
-{
-    BITMAP bmp_color;
-    BITMAP bmp_mask;
-
-    std::vector<uint8_t> color = GetBitmapData(ii.hbmColor, bmp_color);
-    if (color.empty())
-    {
-        return {};
-    }
-
-    // 低于 32 位 → 无法获取 Alpha，放弃
-    if (bmp_color.bmBitsPixel < 32)
-    {
-        return {};
-    }
-
-    // 尝试读取掩码，若彩色位图没有 Alpha 则用掩码补全
-    std::vector<uint8_t> mask = GetBitmapData(ii.hbmMask, bmp_mask);
-    if (!mask.empty())
-    {
-        long pixels = bmp_color.bmHeight * bmp_color.bmWidth;
-
-        if (!BitmapHasAlpha(color.data(), pixels))
-        {
-            ApplyMask(color.data(), mask.data(), bmp_mask);
-        }
-    }
-
-    width = bmp_color.bmWidth;
-    height = bmp_color.bmHeight;
-    return color;
-}
-
-// ========== 从单色掩码提取 BGRA ==========
-
-std::vector<uint8_t> CursorCapture::CopyFromMask(ICONINFO& ii, uint32_t& width, uint32_t& height)
-{
-    BITMAP bmp;
-
-    std::vector<uint8_t> mask = GetBitmapData(ii.hbmMask, bmp);
-    if (mask.empty())
-    {
-        return {};
-    }
-
-    // 单色光标的掩码高度是两倍：上半 AND 掩码，下半 XOR 掩码
-    bmp.bmHeight /= 2;
-
-    long pixels = bmp.bmHeight * bmp.bmWidth;
-    if (pixels == 0)
-    {
-        return {};
-    }
-
-    std::vector<uint8_t> output(pixels * 4);
-
-    long bottom = bmp.bmWidthBytes * bmp.bmHeight;
-
-    // ---- 逐像素：AND 掩码决定透明度，XOR 掩码决定颜色 ----
-    for (long i = 0; i < pixels; i++)
-    {
-        uint8_t and_mask = BitToAlpha(mask.data(), i, true);
-        uint8_t xor_mask = BitToAlpha(mask.data() + bottom, i, true);
-
-        if (!and_mask)
-        {
-            // AND 掩码为黑色 → 不透明
-            *reinterpret_cast<uint32_t*>(&output[i * 4]) = xor_mask ? 0x00FFFFFF : 0xFF000000;
-        }
-        else
-        {
-            // AND 掩码为白色 → 透明或反色
-            *reinterpret_cast<uint32_t*>(&output[i * 4]) = xor_mask ? 0xFFFFFFFF : 0;
-        }
-    }
-
-    width = bmp.bmWidth;
-    height = bmp.bmHeight;
-    return output;
-}
-
-// ========== 按尺寸获取缓存位图 ==========
-
-CursorCapture::CachedCursor* CursorCapture::GetCachedTexture(uint32_t cx, uint32_t cy)
-{
-    // ---- 先查找已缓存的同尺寸位图 ----
-    for (auto& cc : cached_textures_)
-    {
-        if (cc.width == cx && cc.height == cy)
-        {
-            return &cc;
-        }
-    }
-
-    // ---- 没找到 → 新建一个缓存项 ----
-    CachedCursor cc;
-    cc.width = cx;
-    cc.height = cy;
-    cc.data.resize(cx * cy * 4);
-    cached_textures_.push_back(std::move(cc));
-
-    return &cached_textures_.back();
-}
-
-// ========== 解析图标为 BGRA 位图 ==========
-
-bool CursorCapture::CaptureIcon(HICON icon)
-{
-    if (!icon)
-    {
+        DeleteObject(ii.hbmColor);
+        DeleteObject(ii.hbmMask);
         return false;
     }
 
-    ICONINFO ii;
-    if (!GetIconInfo(icon, &ii))
+    int w = bm.bmWidth;
+    int h = bm.bmHeight;
+
+    if (w <= 0 || h <= 0)
     {
+        DeleteObject(ii.hbmColor);
+        DeleteObject(ii.hbmMask);
         return false;
     }
 
-    // ---- 先尝试彩色位图，失败再尝试单色掩码 ----
-    uint32_t width = 0;
-    uint32_t height = 0;
-    monochrome_ = false;
-
-    std::vector<uint8_t> bitmap = CopyFromColor(ii, width, height);
-    if (bitmap.empty())
-    {
-        monochrome_ = true;
-        bitmap = CopyFromMask(ii, width, height);
-    }
-
-    if (!bitmap.empty())
-    {
-        // ---- 尺寸变化时切换缓存槽位 ----
-        if (last_cx_ != width || last_cy_ != height)
-        {
-            // GetCachedTexture 的调用在下面
-            last_cx_ = width;
-            last_cy_ = height;
-        }
-
-        CachedCursor* cc = GetCachedTexture(width, height);
-        if (cc)
-        {
-            memcpy(cc->data.data(), bitmap.data(), bitmap.size());
-        }
-
-        x_hotspot_ = ii.xHotspot;
-        y_hotspot_ = ii.yHotspot;
-    }
+    x_hotspot_ = ii.xHotspot;
+    y_hotspot_ = ii.yHotspot;
 
     DeleteObject(ii.hbmColor);
     DeleteObject(ii.hbmMask);
 
-    return !bitmap.empty();
+    // ---- 第二步：创建 32-bit BGRA 内存位图和 DC ----
+    HDC screen_dc = GetDC(nullptr);
+    HDC mem_dc = CreateCompatibleDC(screen_dc);
+
+    BITMAPINFO bmi = {};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = -h;                                     // 负值 = 自上而下（BGRA 顺序）
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    uint8_t* bits = nullptr;
+    HBITMAP dib = CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS,
+                                   reinterpret_cast<void**>(&bits), nullptr, 0);
+    if (!dib || !bits)
+    {
+        DeleteDC(mem_dc);
+        ReleaseDC(nullptr, screen_dc);
+        return false;
+    }
+
+    HBITMAP old_bmp = static_cast<HBITMAP>(SelectObject(mem_dc, dib));
+
+    // ---- 第三步：用 DrawIconEx 绘制光标到内存 DC ----
+    // DI_NORMAL：绘制标准图标（无特殊效果）
+    // DrawIconEx 内部处理 Alpha 混合、单色掩码、彩色位图等所有格式
+    if (!DrawIconEx(mem_dc, 0, 0, icon, w, h, 0, nullptr, DI_NORMAL))
+    {
+        SelectObject(mem_dc, old_bmp);
+        DeleteObject(dib);
+        DeleteDC(mem_dc);
+        ReleaseDC(nullptr, screen_dc);
+        return false;
+    }
+
+    // ---- 第四步：GDI 预乘 Alpha 反转（GDI 输出预乘 Alpha，需要转为直通 Alpha） ----
+    // DrawIconEx 输出的 BGRA 是预乘 Alpha 格式（R' = R * A / 255）
+    // 我们的合成代码需要直通 Alpha 格式
+    // 参考：https://devblogs.microsoft.com/oldnewthing/20101008-00/?p=12593
+    out_bgra.resize(static_cast<size_t>(w) * h * 4);
+    memcpy(out_bgra.data(), bits, out_bgra.size());
+
+    for (int i = 0; i < w * h; i++)
+    {
+        uint8_t* px = out_bgra.data() + i * 4;
+        uint8_t alpha = px[3];
+        if (alpha > 0 && alpha < 255)
+        {
+            // 反转预乘：R = R' * 255 / A
+            px[0] = static_cast<uint8_t>((static_cast<int>(px[0]) * 255) / alpha);
+            px[1] = static_cast<uint8_t>((static_cast<int>(px[1]) * 255) / alpha);
+            px[2] = static_cast<uint8_t>((static_cast<int>(px[2]) * 255) / alpha);
+        }
+    }
+
+    out_w = static_cast<uint32_t>(w);
+    out_h = static_cast<uint32_t>(h);
+
+    // ---- 第五步：清理 ----
+    SelectObject(mem_dc, old_bmp);
+    DeleteObject(dib);
+    DeleteDC(mem_dc);
+    ReleaseDC(nullptr, screen_dc);
+
+    return true;
 }
 
 // ========== 构造 / 析构 ==========
@@ -259,54 +155,75 @@ void CursorCapture::Capture()
 
     if (!GetCursorInfo(&ci))
     {
+        qDebug() << "[CursorCapture] GetCursorInfo 失败, err =" << GetLastError();
         visible_ = false;
         return;
     }
 
     cursor_pos_ = ci.ptScreenPos;
 
-    // ---- 光标句柄没变 → 不需要重新解析位图 ----
-    if (current_cursor_ == ci.hCursor)
+    // ---- 每帧都更新可见性（CURSOR_SHOWING 标志位） ----
+    bool is_showing = ((ci.flags & CURSOR_SHOWING) != 0);
+
+    if (!is_showing)
     {
+        // 光标被系统隐藏（如编辑文本时 Windows 隐藏光标）
+        qDebug() << "[CursorCapture] CURSOR_SHOWING=0  pos=(" << cursor_pos_.x << "," << cursor_pos_.y
+                 << ") hCursor=0x" << Qt::hex << (quintptr)ci.hCursor << "-> 不可见";
+        visible_ = false;
         return;
     }
 
+    // ---- 光标可见 → 尝试捕获位图 ----
+    // 不缓存句柄：每次都用 DrawIconEx 重新绘制，避免句柄比较导致的卡死
     HICON icon = CopyIcon(ci.hCursor);
-    bool has_bitmap = CaptureIcon(icon);
-    current_cursor_ = ci.hCursor;
-
-    // ---- CURSOR_SHOWING 标志位判断光标是否可见 ----
-    visible_ = has_bitmap && ((ci.flags & CURSOR_SHOWING) != 0);
-
-    DestroyIcon(icon);
+    if (icon)
+    {
+        uint32_t w = 0, h = 0;
+        std::vector<uint8_t> bgra;
+        if (CaptureViaDrawIconEx(icon, w, h, bgra))
+        {
+            bitmap_w_ = w;
+            bitmap_h_ = h;
+            bitmap_data_ = std::move(bgra);
+            visible_ = true;
+        }
+        else
+        {
+            // DrawIconEx 失败 → 保留旧位图，但标记不可见
+            // 下一帧会重试
+            qDebug() << "[CursorCapture] DrawIconEx 失败 → 保留旧位图，标记不可见";
+            visible_ = false;
+        }
+        DestroyIcon(icon);
+    }
+    else
+    {
+        qDebug() << "[CursorCapture] CopyIcon 失败 hCursor=0x" << Qt::hex << (quintptr)ci.hCursor
+                 << "err =" << GetLastError();
+        visible_ = false;
+    }
 }
 
 // ========== 获取光标渲染信息 ==========
 
 bool CursorCapture::GetInfo(CursorInfo& out_info) const
 {
-    if (!visible_ || hidden_)
+    if (!visible_ || hidden_ || bitmap_data_.empty())
     {
+        qDebug() << "[CursorCapture] 获取光标信息失败，光标不可见或被隐藏";
         return false;
     }
 
-    // ---- 找到当前尺寸对应的缓存位图 ----
-    for (const auto& cc : cached_textures_)
-    {
-        if (cc.width == last_cx_ && cc.height == last_cy_)
-        {
-            out_info.bitmap = cc.data.data();
-            out_info.width = cc.width;
-            out_info.height = cc.height;
-            out_info.x_hotspot = x_hotspot_;
-            out_info.y_hotspot = y_hotspot_;
-            out_info.screen_x = cursor_pos_.x;
-            out_info.screen_y = cursor_pos_.y;
-            out_info.visible = true;
-            out_info.monochrome = monochrome_;
-            return true;
-        }
-    }
+    out_info.bitmap = bitmap_data_.data();
+    out_info.width = bitmap_w_;
+    out_info.height = bitmap_h_;
+    out_info.x_hotspot = x_hotspot_;
+    out_info.y_hotspot = y_hotspot_;
+    out_info.screen_x = cursor_pos_.x;
+    out_info.screen_y = cursor_pos_.y;
+    out_info.visible = true;
+    out_info.monochrome = false;
 
-    return false;
+    return true;
 }

@@ -1,16 +1,20 @@
-#ifndef STREAMWINDOW_H
+﻿#ifndef STREAMWINDOW_H
 #define STREAMWINDOW_H
 
 #include <QWidget>
 #include <QTimer>
+#include <cstdint>
 
 class TitleBar;
 class StreamVideoWidget;
+class InputCollector;
+class InputTransportClient;
 class QLabel;
 
 // 串流模式主窗口
 // 与播放器的 MainWindow 完全独立，不含 ControlBar / FileBrowser / SeekBar
 // 布局：TitleBar + StreamVideoWidget + 底部状态栏
+// 第三阶段：集成 InputCollector 采集键鼠 + InputTransportClient TCP 发送
 class StreamWindow : public QWidget
 {
     Q_OBJECT
@@ -27,6 +31,12 @@ public:
 
     void SetStatusText(const QString& text);                                // 更新底部状态栏文字
 
+    // 第三阶段：启动输入采集 + TCP 控制信道
+    // server_ip：服务端 IP（如 "127.0.0.1"）
+    // ctrl_port：控制信道端口（如 47989）
+    bool StartInput(const char* server_ip, uint16_t ctrl_port);             // 启动输入转发
+    void StopInput();                                                       // 停止输入转发
+
 signals:
     void SigRequestClose();                                                 // 请求关闭
 
@@ -34,18 +44,17 @@ public slots:
     void ToggleFullScreen();                                                // 全屏/窗口切换
 
 protected:
-    bool eventFilter(QObject* obj, QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
-
-private slots:
-    void OnMouseIdle();                                                     // 鼠标闲置隐藏控件
 
 private:
     TitleBar* title_bar_{ nullptr };                                        // 标题栏（复用播放器的 TitleBar）
     StreamVideoWidget* video_widget_{ nullptr };                            // 视频显示区
     QLabel* status_label_{ nullptr };                                       // 底部状态栏（连接状态/分辨率/帧率）
-    QTimer* mouse_idle_timer_{ nullptr };                                   // 鼠标闲置定时器
     bool fullscreen_{ false };                                              // 是否全屏
+
+    // ---- 第三阶段：输入转发 ----
+    InputCollector* input_collector_{ nullptr };                            // 输入采集器
+    InputTransportClient* input_transport_{ nullptr };                      // TCP 输入传输客户端
 };
 
 #endif // STREAMWINDOW_H
