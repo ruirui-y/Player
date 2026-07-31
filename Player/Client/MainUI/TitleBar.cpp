@@ -48,15 +48,15 @@ void TitleBar::SetTitle(const QString& title)
 void TitleBar::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton)
-        drag_start_pos_ = event->globalPos() - parentWidget()->pos();
+        drag_start_pos_ = event->globalPos() - window()->pos();   // 记录鼠标相对窗口左上角的偏移
 }
 
 void TitleBar::mouseMoveEvent(QMouseEvent* event)
 {
     if (event->buttons() & Qt::LeftButton)
     {
-        QWidget* win = window();                // ← 改为 window()，找到顶层 MainWindow
-        win->move(win->pos() + event->globalPos() - drag_start_pos_);
-        drag_start_pos_ = event->globalPos();
+        QWidget* win = window();
+        win->move(event->globalPos() - drag_start_pos_);           // 新位置 = 鼠标全局位置 - 初始偏移
+        // 不更新 drag_start_pos_，保持初始偏移量不变
     }
 }

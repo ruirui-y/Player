@@ -1,5 +1,6 @@
-#include "VideoReceiver.h"
+﻿#include "VideoReceiver.h"
 #include "Common/SafeQueue.h"
+#include "Common/LogManager.h"
 
 extern "C"
 {
@@ -44,6 +45,11 @@ bool VideoReceiver::Init(uint16_t listen_port, SafeQueue<AVPacket*>* packet_queu
     setsockopt(sock_, SOL_SOCKET, SO_RCVBUF,
                (const char*)&recv_buf_size, sizeof(recv_buf_size));
 
+    // ---- 允许端口复用（客户端重启时旧 socket 可能未完全释放） ----
+    int reuse = 1;
+    setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR,
+               (const char*)&reuse, sizeof(reuse));
+
     // ---- 第四步：绑定监听端口 ----
     listen_addr_.sin_family = AF_INET;
     listen_addr_.sin_addr.s_addr = htonl(INADDR_ANY);      // 监听所有网卡
@@ -51,7 +57,9 @@ bool VideoReceiver::Init(uint16_t listen_port, SafeQueue<AVPacket*>* packet_queu
 
     if (bind(sock_, (sockaddr*)&listen_addr_, sizeof(listen_addr_)) == SOCKET_ERROR)
     {
-        qDebug() << "[VideoReceiver] bind 失败:" << WSAGetLastError();
+        int err = WSAGetLastError();
+        qDebug() << "[VideoReceiver] bind 失败:" << err;
+        LogManager::Log("ERR", "[VideoReceiver] bind 失败, port=%d, WSAError=%d", listen_port, err);
         closesocket(sock_);
         sock_ = INVALID_SOCKET;
         WSACleanup();
@@ -105,11 +113,23 @@ void VideoReceiver::ReceiveLoop()
     while (running_)
     {
         // ---- 第一步：阻塞接收 UDP 包 ----
-        int recv_len = recvfrom(sock_, (char*)recv_buf, sizeof(recv_buf), 0, nullptr, nullptr);
+        sockaddr_in from_addr{};
+        int from_len = sizeof(from_addr);
+        int recv_len = recvfrom(sock_, (char*)recv_buf, sizeof(recv_buf), 0,
+                                 (sockaddr*)&from_addr, &from_len);
         if (recv_len <= 0)
         {
             // socket 关闭或出错，退出循环
             break;
+        }
+
+        // ---- 第一个包：记录发送方 IP（用于自动连接控制信道） ----
+        if (sender_ip_.empty())
+        {
+            char ip_str[INET_ADDRSTRLEN] = {};
+            inet_ntop(AF_INET, &from_addr.sin_addr, ip_str, sizeof(ip_str));
+            sender_ip_ = ip_str;
+            qDebug() << "[VideoReceiver] 发送方 IP:" << sender_ip_.c_str();
         }
 
         ++total_packets_;

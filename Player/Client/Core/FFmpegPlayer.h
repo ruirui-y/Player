@@ -29,7 +29,7 @@ public:
     void SetVideoHwnd(HWND hwnd);                                                       // 设置渲染窗口句柄
 
     bool OpenFile(const QString& path);                                                 // 打开文件
-    bool OpenStream(uint16_t port, int width, int height, int fps);                      // 打开网络串流（低延迟模式）
+    bool OpenStream(uint16_t port, int fps);                                // 打开网络串流（低延迟模式，分辨率从码流自动获取）
     void Play();                                                                        // 开始/恢复播放
     void Pause();                                                                       // 暂停
     void Seek(qint64 pts_ms);                                                           // 跳转到指定位置（毫秒）
@@ -39,7 +39,10 @@ public:
     qint64 GetPosition() const;                                                         // 当前播放位置（毫秒）
     qint64 GetDuration() const;                                                         // 总时长（毫秒）
     bool   IsPlaying() const;                                                           // 是否正在播放
-    bool   IsPaused() const;                                                            // 是否暂停
+    bool   IsPaused() const;                                                           // 是否暂停
+
+    // 获取视频流发送方 IP（串流模式，收到第一个 UDP 包后才有值）
+    std::string GetSenderIP() const;                                                    // 获取发送方 IP
 
     void SetVolume(double volume);                                                      // 0.0 ~ 1.0
     double GetVolume() const;
@@ -88,6 +91,5 @@ private:
     VideoReceiver* video_receiver_{ nullptr };                       // UDP 接收器（串流模式使用）
     bool is_streaming_{ false };                                      // 是否串流模式
     int  stream_fps_{ 60 };                                          // 串流帧率
-    int  stream_width_{ 0 };                                         // 串流画面宽度
-    int  stream_height_{ 0 };                                       // 串流画面高度
+    bool renderer_inited_{ false };                                   // 渲染器是否已初始化（延迟到首帧）
 };

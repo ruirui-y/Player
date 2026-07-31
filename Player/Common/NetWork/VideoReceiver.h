@@ -1,9 +1,10 @@
-#ifndef VIDEORECEIVER_H
+﻿#ifndef VIDEORECEIVER_H
 #define VIDEORECEIVER_H
 
 #include <cstdint>
 #include <atomic>
 #include <thread>
+#include <string>
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 
@@ -33,6 +34,10 @@ public:
 
     bool IsRunning() const { return running_; }             // 是否运行中
 
+    // 获取视频流发送方 IP（收到第一个 UDP 包后才有值）
+    // 返回字符串如 "192.168.31.142"，未收到包时返回空字符串
+    std::string GetSenderIP() const { return sender_ip_; } // 获取发送方 IP
+
 private:
     void ReceiveLoop();                                     // 接收线程主循环
 
@@ -45,6 +50,9 @@ private:
 
     SafeQueue<AVPacket*>* packet_queue_{nullptr};           // 输出队列（外部拥有）
     NalReassembler reassembler_;                            // 组帧器
+
+    // 发送方地址（从第一个 UDP 包获取，用于自动连接控制信道）
+    std::string sender_ip_;                                 // 发送方 IP 地址
 
     // 统计
     uint64_t total_packets_{0};                             // 收到的 UDP 包总数

@@ -99,23 +99,25 @@ bool FFmpegPlayer::OpenFile(const QString& path)
 // ---- 打开网络串流（低延迟模式）----
 // 与 OpenFile 的区别：不经过 Reader/AVFormatContext，直接用 VideoReceiver 收 UDP 包
 // 解码器手动创建 H.264 参数，渲染时跳过音视频同步，收到帧立刻渲染
-bool FFmpegPlayer::OpenStream(uint16_t port, int width, int height, int fps)
+// 分辨率不在此指定：H.264 解码器会从 SPS（Sequence Parameter Set）自动获取实际分辨率
+// 渲染器延迟到首帧到达时用帧的实际分辨率初始化
+bool FFmpegPlayer::OpenStream(uint16_t port, int fps)
 {
     Close();
 
     is_streaming_ = true;
     stream_fps_ = fps;
-    stream_width_ = width;
-    stream_height_ = height;
+    renderer_inited_ = false;
     duration_ms_ = 0;                                      // 串流无固定时长
 
     // ---- 第一步：手动构造 H.264 的 AVCodecParameters ----
-    // 串流没有 AVFormatContext，需要手动告诉解码器 codec_id / 分辨率 / 像素格式
+    // 串流没有 AVFormatContext，需要手动告诉解码器 codec_id / 像素格式
+    // width/height 设为 0：H.264 解码器会从 SPS NAL 中自动解析实际分辨率
     AVCodecParameters* par = avcodec_parameters_alloc();
     par->codec_type = AVMEDIA_TYPE_VIDEO;
     par->codec_id = AV_CODEC_ID_H264;
-    par->width = width;
-    par->height = height;
+    par->width = 0;                                        // 由 SPS 自动填充
+    par->height = 0;                                       // 由 SPS 自动填充
     par->format = AV_PIX_FMT_NV12;                         // NVENC 输出 NV12
 
     // ---- 第二步：打开视频解码器 ----
@@ -132,18 +134,10 @@ bool FFmpegPlayer::OpenStream(uint16_t port, int width, int height, int fps)
     }
     avcodec_parameters_free(&par);
 
-    // ---- 第三步：初始化渲染器 ----
-    if (video_decoder_.IsHardwareDecoding())
-    {
-        ID3D11Device* device = video_decoder_.GetD3D11Device();
-        if (device)
-        {
-            if (!video_renderer_->Init(device, width, height))
-            {
-                qDebug() << "[FFmpegPlayer] 创建 GPU 管线失败，将回退到 CPU 渲染";
-            }
-        }
-    }
+    // ---- 第三步：渲染器延迟初始化 ----
+    // 不在这里创建交换链，因为还不知道服务端发来的视频分辨率
+    // 等第一帧解码出来后，用 frame->width/height 初始化渲染器
+    // 见 DecodeLoop() 串流模式中的延迟初始化逻辑
 
     // ---- 第四步：创建并初始化 UDP 接收器 ----
     video_receiver_ = new VideoReceiver();
@@ -158,8 +152,8 @@ bool FFmpegPlayer::OpenStream(uint16_t port, int width, int height, int fps)
     }
 
     qDebug() << "[FFmpegPlayer] === 串流加载完毕 ==="
-             << width << "x" << height << "@" << fps << "fps"
-             << "端口" << port;
+             << "fps" << fps << "端口" << port
+             << "（分辨率待首帧自动获取）";
     emit SigLoaded(0);                                     // 串流无时长，发 0
     return true;
 }
@@ -292,6 +286,7 @@ void FFmpegPlayer::Close()
     }
 
     is_streaming_ = false;
+    renderer_inited_ = false;
 
     // 标记已关闭
     duration_ms_ = 0;
@@ -314,6 +309,15 @@ qint64 FFmpegPlayer::GetPosition() const
 qint64 FFmpegPlayer::GetDuration() const { return duration_ms_; }
 bool FFmpegPlayer::IsPlaying() const { return playing_.load() && !paused_.load(); }
 bool FFmpegPlayer::IsPaused() const { return paused_.load(); }
+
+// 获取视频流发送方 IP（从 UDP 包源地址获取）
+std::string FFmpegPlayer::GetSenderIP() const
+{
+    if (video_receiver_)
+        return video_receiver_->GetSenderIP();
+    return {};
+}
+
 void FFmpegPlayer::SetVolume(double volume) { audio_renderer_->SetVolume(volume); }
 double FFmpegPlayer::GetVolume() const { return audio_renderer_->GetVolume(); }
 
@@ -408,6 +412,21 @@ void FFmpegPlayer::DecodeLoop()
 
             if (video_frame->pts != AV_NOPTS_VALUE)
                 current_pts_ms_ = static_cast<qint64>(video_frame->pts * av_q2d(video_tb) * 1000.0);
+
+            // ---- 延迟初始化渲染器：用首帧的实际分辨率创建交换链 ----
+            // 服务端可能是 1080p / 2K / 4K，客户端不需要提前知道
+            // H.264 解码器从 SPS 自动解析分辨率，第一帧就带有正确的 width/height
+            if (!renderer_inited_ && video_decoder_.IsHardwareDecoding())
+            {
+                ID3D11Device* device = video_decoder_.GetD3D11Device();
+                if (device && video_frame->width > 0 && video_frame->height > 0)
+                {
+                    qDebug() << "[FFmpegPlayer] 首帧到达，初始化渲染器:"
+                             << video_frame->width << "x" << video_frame->height;
+                    video_renderer_->Init(device, video_frame->width, video_frame->height);
+                    renderer_inited_ = true;
+                }
+            }
 
             video_renderer_->Render(video_frame);
             av_frame_free(&video_frame);
