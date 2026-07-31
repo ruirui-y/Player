@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "Common/NetWork/VideoSender.h"
+#include "Common/NetWork/AudioSender.h"
 #include "Common/Input/InputTransport.h"
 #include "Common/Input/InputInjector.h"
 #include "Common/Input/InputEvent.h"
@@ -17,6 +18,8 @@
 #include "Server/OBS_Capture/IVideoEncoder.h"
 #include "Server/OBS_Capture/ObsNvencEncoder.h"
 #include "Server/OBS_Capture/ObsNvencEncoderFast.h"
+#include "Server/AudioCapture/WasapiCapture.h"
+#include "Server/AudioCapture/OpusAudioEncoder.h"
 
 // ---- 构造 ----
 StreamServer::StreamServer()
@@ -27,6 +30,11 @@ StreamServer::StreamServer()
 StreamServer::~StreamServer()
 {
     Stop();
+
+    // ---- 第四阶段：先停音频组件（独立线程，需先 join）----
+    if (wasapi_capture_) { wasapi_capture_->Stop(); delete wasapi_capture_; wasapi_capture_ = nullptr; }
+    if (opus_encoder_)   { delete opus_encoder_;   opus_encoder_   = nullptr; }
+    if (audio_sender_)   { audio_sender_->Close(); delete audio_sender_;   audio_sender_   = nullptr; }
 
     // ---- 第三阶段：先停输入组件 ----
     if (input_server_)  { input_server_->Stop(); delete input_server_;  input_server_  = nullptr; }
@@ -45,7 +53,7 @@ StreamServer::~StreamServer()
 // ================================================================
 bool StreamServer::Init(uint16_t port, int monitor_index,
                         const char* dest_ip, int fps, int bitrate_kbps,
-                        uint16_t ctrl_port, bool use_fast)
+                        uint16_t ctrl_port, bool use_fast, uint16_t audio_port)
 {
     fps_ = fps;
 
@@ -187,8 +195,45 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
     input_server_->Start();
     LogManager::Log("INFO", "[StreamServer] 输入控制信道已启动 (port %d)", ctrl_port);
 
-    LogManager::Log("INFO", "[StreamServer] 初始化完成 -> %s:%d  %dx%d@%dfps  %dbps  ctrl:%d",
-                    dest_ip, port, width_, height_, fps_, bitrate_kbps * 1000, ctrl_port);
+    // ---- 第九步：初始化音频组件（第四阶段：WASAPI 采集 → Opus 编码 → UDP 发送）----
+    wasapi_capture_ = new WasapiCapture();
+    if (!wasapi_capture_->Init(48000, 2))
+    {
+        LogManager::Log("WARN", "[StreamServer] WASAPI 采集器初始化失败，音频功能不可用");
+        delete wasapi_capture_;
+        wasapi_capture_ = nullptr;
+    }
+    else
+    {
+        opus_encoder_ = new OpusAudioEncoder();
+        if (!opus_encoder_->Init(48000, 2, 128000, 20))
+        {
+            LogManager::Log("WARN", "[StreamServer] Opus 编码器初始化失败，音频功能不可用");
+            delete opus_encoder_;
+            opus_encoder_ = nullptr;
+        }
+
+        audio_sender_ = new AudioSender();
+        if (!audio_sender_->Init(dest_ip, audio_port))
+        {
+            LogManager::Log("WARN", "[StreamServer] AudioSender 初始化失败，音频功能不可用");
+            delete audio_sender_;
+            audio_sender_ = nullptr;
+        }
+
+        // ---- 设置音频采集回调：PCM 缓冲 → 编码 → 发送 ----
+        if (opus_encoder_ && audio_sender_)
+        {
+            wasapi_capture_->SetCallback(
+                [this](const int16_t* pcm_data, int sample_count, uint32_t timestamp_ms)
+                {
+                    OnAudioData(pcm_data, sample_count, timestamp_ms);
+                });
+        }
+    }
+
+    LogManager::Log("INFO", "[StreamServer] 初始化完成 -> %s:%d  %dx%d@%dfps  %dbps  ctrl:%d  audio:%d",
+                    dest_ip, port, width_, height_, fps_, bitrate_kbps * 1000, ctrl_port, audio_port);
     return true;
 }
 
@@ -204,6 +249,10 @@ void StreamServer::Run()
     uint64_t frame_index = 0;
 
     LogManager::Log("INFO", "[StreamServer] 开始推流... (Ctrl+C 停止)");
+
+    // ---- 启动音频采集（独立线程，不阻塞视频主循环）----
+    if (wasapi_capture_)
+        wasapi_capture_->Start();
 
     while (running_)
     {
@@ -289,4 +338,61 @@ void StreamServer::Run()
 void StreamServer::Stop()
 {
     running_ = false;
+
+    // ---- 停止音频采集（独立线程）----
+    if (wasapi_capture_)
+        wasapi_capture_->Stop();
+}
+
+// ================================================================
+// ---- 音频回调：PCM 缓冲 → 凑够一帧 → Opus 编码 → UDP 发送 ----
+// ================================================================
+void StreamServer::OnAudioData(const int16_t* pcm_data, int sample_count, uint32_t timestamp_ms)
+{
+    if (!opus_encoder_ || !audio_sender_)
+        return;
+
+    // ---- 第一次收到数据时初始化时间戳 ----
+    if (audio_frame_index_ == 0)
+    {
+        audio_timestamp_ms_ = timestamp_ms;
+        LogManager::Log("INFO", "[StreamServer] 首次收到音频数据: %d 帧, timestamp=%u",
+                        sample_count, timestamp_ms);
+    }
+
+    // ---- 每 500 帧（约 10 秒）打印一次统计 ----
+    if (audio_frame_index_ > 0 && audio_frame_index_ % 500 == 0)
+    {
+        LogManager::Log("INFO", "[StreamServer] 音频统计: 已发送 %u 帧, buffer=%zu",
+                        audio_frame_index_, audio_pcm_buffer_.size());
+    }
+
+    // ---- 第一步：追加 PCM 数据到缓冲区 ----
+    // WASAPI 每次返回的采样数不固定，需要凑够 Opus 帧大小（960 = 20ms@48kHz）
+    uint32_t channels = wasapi_capture_ ? wasapi_capture_->Channels() : 2;
+    audio_pcm_buffer_.insert(audio_pcm_buffer_.end(),
+                             pcm_data, pcm_data + sample_count * channels);
+
+    // ---- 第二步：凑够一帧就编码发送 ----
+    int frame_samples = opus_encoder_->FrameSamples();     // 960
+    int frame_total = frame_samples * channels;             // 1920
+
+    while (audio_pcm_buffer_.size() >= static_cast<size_t>(frame_total))
+    {
+        std::vector<uint8_t> opus_data;
+        int encoded = opus_encoder_->Encode(audio_pcm_buffer_.data(),
+                                            frame_samples, opus_data);
+        if (encoded > 0)
+        {
+            audio_sender_->SendFrame(opus_data.data(), encoded,
+                                     audio_frame_index_++, audio_timestamp_ms_);
+        }
+
+        // 时间戳递增（每帧 20ms）
+        audio_timestamp_ms_ += opus_encoder_->FrameMs();
+
+        // 移除已编码的数据
+        audio_pcm_buffer_.erase(audio_pcm_buffer_.begin(),
+                                audio_pcm_buffer_.begin() + frame_total);
+    }
 }

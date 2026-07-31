@@ -11,12 +11,15 @@
 #include "AudioDecoder.h"
 #include "Common/ClockUtil.h"
 #include "Common/NetWork/VideoReceiver.h"
+#include "Common/NetWork/AudioReceiver.h"
 
 class VideoRenderer;        // 视频渲染层（前向声明）
-class AudioRenderer;        // 音频渲染层（前向声明）
+class AudioRenderer;        // 音频渲染层（前向声明，文件播放专用）
+class StreamAudioRenderer;  // 串流音频渲染层（前向声明，串流专用）
 
 struct AVPacket;
 struct AVFrame;
+struct AVRational;
 
 class FFmpegPlayer : public QObject
 {
@@ -29,7 +32,7 @@ public:
     void SetVideoHwnd(HWND hwnd);                                                       // 设置渲染窗口句柄
 
     bool OpenFile(const QString& path);                                                 // 打开文件
-    bool OpenStream(uint16_t port, int fps);                                // 打开网络串流（低延迟模式，分辨率从码流自动获取）
+    bool OpenStream(uint16_t video_port, int fps, uint16_t audio_port = 47997);         // 打开网络串流（低延迟模式，分辨率从码流自动获取）
     void Play();                                                                        // 开始/恢复播放
     void Pause();                                                                       // 暂停
     void Seek(qint64 pts_ms);                                                           // 跳转到指定位置（毫秒）
@@ -39,7 +42,7 @@ public:
     qint64 GetPosition() const;                                                         // 当前播放位置（毫秒）
     qint64 GetDuration() const;                                                         // 总时长（毫秒）
     bool   IsPlaying() const;                                                           // 是否正在播放
-    bool   IsPaused() const;                                                           // 是否暂停
+    bool   IsPaused() const;                                                            // 是否暂停
 
     // 获取视频流发送方 IP（串流模式，收到第一个 UDP 包后才有值）
     std::string GetSenderIP() const;                                                    // 获取发送方 IP
@@ -57,8 +60,16 @@ signals:
 private:
     void DecodeLoop();                                                                  // 渲染线程主循环
 
+    void GetStreamInfo(double& fps, AVRational& video_tb, bool& has_audio, double& frame_interval_ms);   // 获取流信息（帧率、时基、音频标志）
+    bool WaitForFrameQueues(bool has_audio);                                                              // 等待帧队列就绪，返回 false 表示退出
+    void InitSyncState();                                                                                 // 初始化同步计数器
+    void ProcessStreamingLoop(bool has_audio, AVRational video_tb);                                       // 串流主循环（喂音频 + 渲染视频）
+    void ProcessFileLoop(bool has_audio, AVRational video_tb, double fps, double frame_interval_ms);    // 文件播放主循环（音视频同步 + 渲染）
+    void CleanupFrames();                                                                                 // 清理残留帧队列
+
     VideoRenderer* video_renderer_{ nullptr };                                          // 视频渲染层
-    AudioRenderer* audio_renderer_{ nullptr };                                          // 音频渲染层
+    AudioRenderer* audio_renderer_{ nullptr };                                          // 音频渲染层（文件播放）
+    StreamAudioRenderer* stream_audio_renderer_{ nullptr };                             // 音频渲染层（串流播放）
 
     HWND hwnd_{ nullptr };                                                              // 窗口句柄
 
@@ -88,8 +99,10 @@ private:
     AudioDecoder  audio_decoder_{ audio_packet_queue_, audio_frame_queue_ };
 
     // ---- 串流模式 ----
-    VideoReceiver* video_receiver_{ nullptr };                       // UDP 接收器（串流模式使用）
-    bool is_streaming_{ false };                                      // 是否串流模式
-    int  stream_fps_{ 60 };                                          // 串流帧率
-    bool renderer_inited_{ false };                                   // 渲染器是否已初始化（延迟到首帧）
+    VideoReceiver* video_receiver_{ nullptr };                                          // UDP 视频接收器（串流模式使用）
+    AudioReceiver* audio_receiver_{ nullptr };                                          // UDP 音频接收器（串流模式使用）
+    bool is_streaming_{ false };                                                        // 是否串流模式
+    int  stream_fps_{ 60 };                                                             // 串流帧率
+    bool renderer_inited_{ false };                                                     // 渲染器是否已初始化（延迟到首帧）
+    bool closed_{ true };                                                               // 是否已关闭（独立标志，替代 duration_ms_ 判断）
 };

@@ -124,7 +124,7 @@ bool PlayerApp::Init(int argc, char* argv[])
     CreatePlayerUI();
     CreatePlayer();
     BindPlayerSignals();
-    TestScreenCapture();
+    // TestScreenCapture();
     return true;
 }
 

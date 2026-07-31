@@ -1,4 +1,4 @@
-#ifndef DXGIDUPLICATOR_H
+﻿#ifndef DXGIDUPLICATOR_H
 #define DXGIDUPLICATOR_H
 
 #include "CaptureCommon.h"
@@ -39,8 +39,8 @@ private:
 
     ID3D11Device* device_{nullptr};                                     // D3D11 设备（外部拥有，不可释放）
     ID3D11DeviceContext* context_{nullptr};                             // D3D11 设备上下文（外部拥有）
-    IDXGIOutputDuplication* duplication_{nullptr};                     // DXGI Desktop Duplication 对象
-    ID3D11Texture2D* target_texture_{nullptr};                         // 私有目标纹理（ReleaseFrame 前拷贝桌面帧）
+    IDXGIOutputDuplication* duplication_{nullptr};                      // DXGI Desktop Duplication 对象
+    ID3D11Texture2D* target_texture_{nullptr};                          // 私有目标纹理（ReleaseFrame 前拷贝桌面帧）
     uint32_t target_width_{0};                                          // 目标纹理宽度（尺寸变化时重建）
     uint32_t target_height_{0};                                         // 目标纹理高度
 

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <atomic>
+#include <vector>
 
 struct ID3D11Device;
 struct ID3D11DeviceContext;
@@ -12,6 +13,9 @@ class IVideoEncoder;
 class VideoSender;
 class InputTransportServer;
 class InputInjector;
+class WasapiCapture;
+class OpusAudioEncoder;
+class AudioSender;
 
 // 服务器模式：桌面采集 → NVENC 编码 → UDP 发送
 // 第三阶段：TCP 控制信道接收输入事件 → SendInput 注入
@@ -35,7 +39,8 @@ public:
               const char* dest_ip = "127.0.0.1",
               int fps = 60, int bitrate_kbps = 10000,
               uint16_t ctrl_port = 47989,
-              bool use_fast = false);
+              bool use_fast = false,
+              uint16_t audio_port = 47997);
 
     void Run();                                                                                         // 主循环（阻塞），按帧率采集→编码→发送
     void Stop();                                                                                        // 停止主循环
@@ -56,6 +61,17 @@ private:
 
     // ---- GDI 路线上传纹理 ----
     ID3D11Texture2D* upload_tex_{nullptr};                                                              // CPU→GPU 上传用纹理（GDI 路线）
+
+    // ---- 第四阶段：音频组件 ----
+    WasapiCapture* wasapi_capture_{nullptr};                                                            // WASAPI 环回采集器
+    OpusAudioEncoder* opus_encoder_{nullptr};                                                           // Opus 编码器
+    AudioSender* audio_sender_{nullptr};                                                                // UDP 音频发送器
+
+    std::vector<int16_t> audio_pcm_buffer_;                                                            // PCM 累积缓冲区（凑帧用）
+    uint16_t audio_frame_index_{0};                                                                     // 音频帧序号
+    uint32_t audio_timestamp_ms_{0};                                                                    // 音频时间戳（毫秒）
+
+    void OnAudioData(const int16_t* pcm_data, int sample_count, uint32_t timestamp_ms);                // 音频回调：缓冲+编码+发送
 
     // ---- 参数 ----
     int fps_{60};                                                                                       // 帧率
