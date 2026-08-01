@@ -137,6 +137,9 @@ void PlayerApp::OnStreamReady(const QString& ip, uint16_t ctrl_port)
 
     sw->SetStatusText(u8"已连接 — 控制信道就绪");
     player_->SetupStreamControl(sw->GetInputTransport());
+
+    // ---- 第八阶段：启动 OSD 统计定时器 ----
+    sw->StartStatsTimer(player_);
 }
 
 bool PlayerApp::HasSenderIP() const

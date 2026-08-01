@@ -9,6 +9,7 @@ class TitleBar;
 class StreamVideoWidget;
 class InputCollector;
 class InputTransportClient;
+class FFmpegPlayer;
 class QLabel;
 
 // 串流模式主窗口
@@ -30,6 +31,10 @@ public:
     HWND GetVideoHwnd() const;                                              // 获取 D3D11 用的 HWND
 
     void SetStatusText(const QString& text);                                // 更新底部状态栏文字
+
+    // 启动 OSD 统计定时器（每秒从 FFmpegPlayer 读取 FPS/RTT 刷新状态栏）
+    void StartStatsTimer(FFmpegPlayer* player);
+    void StopStatsTimer();
 
     // 第三阶段：启动输入采集 + TCP 控制信道
     // server_ip：服务端 IP（如 "127.0.0.1"）

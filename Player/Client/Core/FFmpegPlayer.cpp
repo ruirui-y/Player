@@ -5,6 +5,7 @@
 #include "Common/Input/InputTransport.h"
 #include "Common/Network/NetworkStats.h"
 #include "RttMeasurer.h"
+#include "Pacer.h"
 #include <QDebug>
 #include <chrono>
 #include <windows.h> 
@@ -194,6 +195,10 @@ bool FFmpegPlayer::OpenStream(uint16_t video_port, int fps, uint16_t audio_port)
         }
     }
 
+    // ---- 第八阶段：创建 VSync 帧步调器 ----
+    if (!pacer_)
+        pacer_ = new Pacer();
+
     qDebug() << "[FFmpegPlayer] === 串流加载完毕 ==="
              << "fps" << fps << "视频端口" << video_port << "音频端口" << audio_port
              << "（分辨率待首帧自动获取）";
@@ -231,6 +236,7 @@ void FFmpegPlayer::Play()
     if (is_streaming_)
     {
         stream_audio_renderer_->Start();
+        if (pacer_) pacer_->Start();
     }
     else
     {
@@ -405,6 +411,12 @@ void FFmpegPlayer::Close()
         rtt_measurer_->Stop();
         delete rtt_measurer_;
         rtt_measurer_ = nullptr;
+    }
+    if (pacer_)
+    {
+        pacer_->Stop();
+        delete pacer_;
+        pacer_ = nullptr;
     }
     if (audio_receiver_)
     {
@@ -630,6 +642,8 @@ void FFmpegPlayer::ProcessStreamingLoop(bool has_audio, AVRational video_tb)
             }
         }
 
+        // ---- 第八阶段：帧计数（FPS 统计） ----
+        pacer_->OnFramePresented();
         video_renderer_->Render(video_frame);
         av_frame_free(&video_frame);
     }
@@ -754,4 +768,20 @@ void FFmpegPlayer::CleanupFrames()
     AVFrame* f = nullptr;
     while (video_frame_queue_.TryPop(f)) av_frame_free(&f);
     while (audio_frame_queue_.TryPop(f)) av_frame_free(&f);
+}
+
+// ---- 第八阶段：网络统计读取（供 StreamWindow OSD 使用） ----
+int FFmpegPlayer::GetReceiveFps() const
+{
+    return video_receiver_ ? video_receiver_->GetReceiveFps() : 0;
+}
+
+int FFmpegPlayer::GetRenderFps() const
+{
+    return pacer_ ? pacer_->GetRenderFps() : 0;
+}
+
+int FFmpegPlayer::GetRttMs() const
+{
+    return rtt_measurer_ ? rtt_measurer_->GetLatestRtt() : 0;
 }

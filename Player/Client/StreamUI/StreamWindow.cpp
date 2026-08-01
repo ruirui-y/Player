@@ -4,14 +4,19 @@
 #include "StreamWindow.h"
 #include "StreamVideoWidget.h"
 #include "Client/MainUI/TitleBar.h"
+#include "Client/Core/FFmpegPlayer.h"
 #include "Common/Input/InputCollector.h"
 #include "Common/Input/InputTransport.h"
 #include "Common/Input/InputEvent.h"
 #include "Common/LogManager.h"
 
 #include <QVBoxLayout>
+#include <QTimer>
 #include <QApplication>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QKeyEvent>
+#include <QWindow>
 #include <QCursor>
 #include <QDebug>
 #include <windows.h>
@@ -91,6 +96,34 @@ void StreamWindow::SetStatusText(const QString& text)
         status_label_->setText(text);
 }
 
+// ---- 第八阶段：OSD 统计定时器 ----
+void StreamWindow::StartStatsTimer(FFmpegPlayer* player)
+{
+    if (!player) return;
+
+    auto* timer = new QTimer(this);
+    timer->setObjectName("StatsTimer");
+    QObject::connect(timer, &QTimer::timeout, this, [this, player, timer]() {
+        if (!player->IsPlaying())
+        {
+            timer->stop();
+            return;
+        }
+        int recv = player->GetReceiveFps();
+        int rend = player->GetRenderFps();
+        int rtt  = player->GetRttMs();
+        status_label_->setText(
+            QString(u8"接收:%1fps │ 渲染:%2fps │ RTT:%3ms").arg(recv).arg(rend).arg(rtt));
+    });
+    timer->start(1000);
+}
+
+void StreamWindow::StopStatsTimer()
+{
+    auto* timer = findChild<QTimer*>("StatsTimer");
+    if (timer) { timer->stop(); delete timer; }
+}
+
 // ================================================================
 // ---- 全屏/窗口切换 ----
 // 修复：全屏时用 raise() + activateWindow() 确保窗口在前台且有焦点
@@ -101,11 +134,10 @@ void StreamWindow::ToggleFullScreen()
 
     if (fullscreen_)
     {
-        // ---- 进入全屏：隐藏状态栏 ----
         status_label_->hide();
+        if (auto* handle = windowHandle())
+            handle->setScreen(QGuiApplication::screenAt(pos()));
         showFullScreen();
-
-        // 确保窗口有焦点，能接收键盘事件
         raise();
         activateWindow();
         setFocus();

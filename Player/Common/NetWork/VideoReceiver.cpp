@@ -205,6 +205,7 @@ void VideoReceiver::ReceiveLoop()
         {
             NetworkStats st;
             st.receive_fps = static_cast<int>(total_frames_ - last_stats_frames_);
+            receive_fps_.store(st.receive_fps);
             st.fec_recovered = reassembler_.GetFecRecoveredCount() - last_fec_recovered_;
             st.fec_failed = reassembler_.GetFecFailCount() - last_fec_failed_;
             st.lost_frames = total_lost_frames_;

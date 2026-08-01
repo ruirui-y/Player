@@ -1,6 +1,11 @@
 ﻿#ifndef VIDEORECEIVER_H
 #define VIDEORECEIVER_H
 
+// 必须在任何 Windows 头文件之前定义，阻止 min/max 宏污染 std::min/std::max
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <cstdint>
 #include <atomic>
 #include <thread>
@@ -42,8 +47,10 @@ public:
     bool IsRunning() const { return running_; }             // 是否运���中
 
     // 获取视频流发送方 IP（收到第一个 UDP 包后才有值）
-    // 返回字符串如 "192.168.31.142"，未收到包时返回空字符串
     std::string GetSenderIP() const { return sender_ip_; } // 获取发送方 IP
+
+    // 获取接收帧率（每秒帧数）
+    int GetReceiveFps() const { return receive_fps_.load(); }
 
     // IDR 请求回调（客户端上层设置，当需要请求 IDR 时触发）
     // 上层应通过控制信道发送 { "type": "request_idr" } JSON 到服务端
@@ -103,6 +110,9 @@ private:
     int last_fec_recovered_{0};                                 // 上次统计时的 FEC 恢复数
     int last_fec_failed_{0};                                    // 上次统计时的 FEC 失败数
     uint64_t total_bytes_{0};                                   // 累计接收字节数
+
+    // OSD 统计
+    std::atomic<int> receive_fps_{0};                           // 接收帧率
 };
 
 #endif // VIDEORECEIVER_H

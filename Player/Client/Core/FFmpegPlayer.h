@@ -18,6 +18,7 @@ class AudioRenderer;        // 音频渲染层（前向声明，文件播放专�
 class StreamAudioRenderer;  // 串流音频渲染层（前向声明，串流专用）
 class InputTransportClient; // 控制信道客户端（前向声明，IDR 请求用）
 class RttMeasurer;          // RTT 测量器（前向声明）
+class Pacer;                // VSync 帧步调器（前向声明）
 
 struct AVPacket;
 struct AVFrame;
@@ -53,7 +54,12 @@ public:
     // 绑定 IDR 请求 + RTT 测量 + 网络统计上报
     void SetupStreamControl(InputTransportClient* input_transport);                       // 绑定控制信道
 
-    void SetVolume(double volume);                                                      // 0.0 ~ 1.0
+    // 串流模式网络统计（供 StreamWindow OSD 读取）
+    int   GetReceiveFps() const;                          // VideoReceiver 接收 FPS
+    int   GetRenderFps() const;                           // Pacer 渲染 FPS
+    int   GetRttMs() const;                               // RttMeasurer 最新 RTT
+
+    void SetVolume(double volume);                        // 0.0 ~ 1.0
     double GetVolume() const;
 
 signals:
@@ -108,6 +114,7 @@ private:
     VideoReceiver* video_receiver_{ nullptr };                                          // UDP 视频接收器（串流模式使用）
     AudioReceiver* audio_receiver_{ nullptr };                                          // UDP 音频接收器（串流模式使用）
     RttMeasurer*   rtt_measurer_{ nullptr };                                            // RTT 测量器（串流模式使用）
+    Pacer*         pacer_{ nullptr };                                                   // VSync 帧步调器
     bool is_streaming_{ false };                                                        // 是否串流模式
     int  stream_fps_{ 60 };                                                             // 串流帧率
     bool renderer_inited_{ false };                                                     // 渲染器是否已初始化（延迟到首帧）
