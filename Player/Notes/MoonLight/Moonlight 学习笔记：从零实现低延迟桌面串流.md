@@ -778,59 +778,90 @@ void InputInjector::InjectMouseMove(int dx, int dy)
 
 ---
 
-## 第七阶段：会话协商（RTSP/SDP）+ 配对与流加密
+## 第七阶段：统一客户端应用（架构重组 + UI 整合）
 
 ### 目标
 
-当前编解码参数硬编码、无安全认证。本阶段加入 RTSP/SDP 参数协商、HTTPS 配对（证书 + 挑战响应）、AES-GCM 流加密。纯内网自用可跳过本阶段，对接标准 Moonlight 客户端则必须实现。
+当前三个模式通过命令行 `--server` / `--stream` 切换，功能完整但不像产品。本阶段做两件事：**架构重组**（让 UI 层职责清晰）+ **统一入口**（一个 exe 搞定播放、控制、被控）。
 
-### 参考源码
+### 架构原则
 
-| 功能       | 参考来源          | 文件                                            |
-| ---------- | ----------------- | ----------------------------------------------- |
-| RTSP 服务器 | Sunshine          | `rtsp.cpp` 的 `cmd_describe/setup/announce/play` |
-| SDP 生成   | moonlight-common-c | `SdpGenerator.c`                                |
-| HTTPS 配对 | Sunshine          | `nvhttp.cpp` 的 `pair()` + `crypto.cpp`         |
-| 客户端配对 | Moonlight-Qt      | `backend/nvpairingmanager.cpp`                  |
-| 流加密     | Sunshine          | `crypto.cpp` 的 `cipher::gcm_t`                 |
+- **MainWindow 是 UI 的根**：持有 QStackedWidget + TitleBar，管理所有页面导航
+- **PlayerApp 只管理播放器引擎**：创建 MainWindow、管理 FFmpegPlayer 生命周期，不碰 UI 堆栈
+- **Server 引擎与 Server UI 分离**：`Server/` 放纯引擎代码，`Client/ServerUI/` 放被控端面板
+- **页面通过 MainWindow 切换**：页面之间解耦，各自只发信号，由 MainWindow 统一路由
 
-### 详细步骤
+### 组件分层
 
-**7.1 RTSP/SDP 协商（TCP 48010）**
+```
+App/
+  main.cpp             入口
+  PlayerApp            应用控制器（轻量：创建 MainWindow + 管理 FFmpegPlayer）
 
-- DESCRIBE：服务端返回能力声明（codec、分辨率档位、帧率、FEC 支持、RFI 能力、音频档位）
-- SETUP：客户端为 audio/video/control 各请求端口，服务端返回 server_port + ping payload
-- ANNOUNCE：客户端发完整流参数（分辨率/帧率/码率/CSC/FEC/加密标志），服务端据此建 `config_t`
-- PLAY：开始串流
+Client/MainUI/
+  MainWindow           主窗口 ★核心★（QStackedWidget + TitleBar + 页面导航）
+  LaunchPage           启动页（三按钮）
+  PlayerPage           播放器页面（原 MainWindow 的播放器内容）
+    └─ VideoWidget + ControlBar + FileBrowser
 
-**7.2 HTTPS 配对（TCP 47984）**
+Client/StreamUI/
+  ConnectDialog        连接对话框
+  StreamWindow         串流画面页面
 
-- 服务端自签 X.509 证书 + 私钥（CN="NVIDIA GameStream Client"）
-- 4 步挑战-响应：getservercert → clientchallenge → serverchallengeresp → clientpairingsecret
-- 用 `SHA-256(salt+PIN)` 截 16 字节作 AES-128-ECB 密钥加密 challenge
-- 配对成功后客户端证书存入信任链，后续连接凭证书认证
+Client/ServerUI/       ★新建目录★
+  ServerPanel          被控端面板
 
-**7.3 流加密（AES-GCM）**
+Client/Core/           （不变）
+  FFmpegPlayer         播放器引擎
 
-- 配对后 launch 传 `rikey`（GCM key）
-- 视频/音频/控制流分别 AES-GCM 加密
-- IV 用序列号 + 固定字节按 NIST SP 800-38D 8.2.1 构造（'V'/'A'/'C'+'H'+'C' 前缀）
+Server/                （不变，纯引擎）
+  StreamServer         推流引擎
+  OBS_Capture/         桌面采集
+  AudioCapture/        音频采集
+```
 
-> **技术决策说明**
->
-> **为什么是这个方案**：RTSP 是流媒体参数协商的标准协议，用它动态协商 codec/分辨率/码率，不用改代码重编译。配对用挑战-响应而非明文密码，是因为 PIN 码本身很弱（4 位），必须靠非对称+对称组合把弱 PIN 升级成强会话密钥。AES-GCM 是因为串流既要加密防窃听又要认证防篡改，GCM 一次性给两者。
->
-> **底层是什么**：RTSP 本质是 HTTP-like 文本协议，每条消息有方法+URL+头+体，状态码语义和 HTTP 一致。AES-GCM 是 AEAD 认证加密，GCM 模式把 CTR 计数器加密和 GHASH 认证同步做，一个 pass 出密文+tag。IV 不能重用是硬约束，所以用序列号构造。
->
-> **如果是你你会怎么学**：RTSP 看 RFC 2326 和 Sunshine `rtsp.cpp`；配对流程看 `nvhttp.cpp::pair()` 的 4 步状态机；AES-GCM 看 NIST SP 800-38D 和 OpenSSL 的 `EVP_aes_128_gcm` 示例。
+### UI 页面流转
+
+```
+MainWindow
+  ├── TitleBar（固定顶部，跨页面复用）
+  └── QStackedWidget
+        ├── [0] LaunchPage      启动页
+        ├── [1] PlayerPage      播放器
+        ├── [2] ConnectDialog   控制端连接
+        ├── [3] StreamWindow    控制端串流画面
+        └── [4] ServerPanel     被控端面板
+```
+
+### 关键重构点
+
+| 重构项 | 旧 | 新 |
+|--------|----|----|
+| UI 根节点 | PlayerApp 持有 QStackedWidget | MainWindow 持有 QStackedWidget |
+| 播放器 UI | MainWindow 既做窗口又做播放器 | MainWindow 只做窗口容器，PlayerPage 是播放器页面 |
+| 被控端 UI | Server/ServerPanel | Client/ServerUI/ServerPanel |
+| PlayerApp 职责 | UI 管理 + 引擎管理 | 只管理引擎，不碰 UI 堆栈 |
+| 页面导航 | PlayerApp 直接切换 | 各页面发信号 → MainWindow 统一路由 |
+
+### 信号流
+
+```
+LaunchPage.SigPlayerMode      → MainWindow.SwitchToPlayer()
+LaunchPage.SigControllerMode  → MainWindow.SwitchToController()
+LaunchPage.SigServerMode      → MainWindow.SwitchToServer()
+ConnectDialog.SigConnect      → MainWindow → PlayerApp.StartStream(...)
+任意页面.SigBack              → MainWindow.SwitchToLaunch()
+```
 
 ### 评价标准
 
-| 指标       | 目标值            | 测试方法           |
-| ---------- | ----------------- | ------------------ |
-| 协商成功率 | 100%              | 反复协商 50 次     |
-| 配对成功率 | 100%（正常网络）  | 反复配对 20 次     |
-| 加密开销   | <5% CPU           | 对比加密前后 CPU   |
+| 指标 | 目标 |
+|------|------|
+| 启动到模式选择 | <1 秒 |
+| 模式切换 | 无需重启，返回启动页即可 |
+| TitleBar 复用 | 所有页面共享同一个标题栏 |
+| Server 引擎无 UI 依赖 | Server/ 目录下零 Qt UI 引用 |
+| 三种模式 | 同一个 exe，双击即用 |
 
 ---
 

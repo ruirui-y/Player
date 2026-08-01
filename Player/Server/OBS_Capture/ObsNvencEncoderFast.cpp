@@ -407,16 +407,8 @@ bool ObsNvencEncoderFast::SetBitrate(int bitrate_kbps)
     bitrate_kbps_ = bitrate_kbps;
     codec_ctx_->bit_rate = static_cast<int64_t>(bitrate_kbps_) * 1000;
 
-    // 通知 NVENC 新码率
-    char bitrate_str[32];
-    snprintf(bitrate_str, sizeof(bitrate_str), "%dk", bitrate_kbps_);
-    int ret = av_opt_set(codec_ctx_->priv_data, "b", bitrate_str, 0);
-    if (ret < 0)
-    {
-        qDebug() << "[FastEncoder] SetBitrate av_opt_set 失败, ret=" << ret;
-        return false;
-    }
-
+    // NVENC 运行时改码率：直接设置 AVCodecContext.bit_rate
+    // av_opt_set 的 "b" 选项在 NVENC priv_data 上不存在，会返回 EINVAL
     qDebug() << "[FastEncoder] 码率已调整为" << bitrate_kbps_ << "kbps";
     return true;
 }

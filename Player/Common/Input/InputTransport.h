@@ -97,6 +97,9 @@ public:
     // 兼容旧回调（如果新旧都设置，新回调优先）
     std::function<void(const char* msg_type)> OnControlMessageLegacy;                       // 旧版兼容
 
+    // 客户端断开通知（AcceptLoop 检测到断开后调用）
+    std::function<void()> OnClientDisconnected;                                             // 断线回调
+
     // 发送消息到当前客户端（非阻塞，失败无影响）
     bool SendToClient(uint8_t msg_type, const uint8_t* payload, int payload_len);          // 发送消息
 

@@ -157,6 +157,18 @@
     <ClCompile Include="Client\Core\RttMeasurer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Client\StreamUI\ConnectDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\MainUI\LaunchPage.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\MainUI\PlayerPage.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Client\ServerUI\ServerPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="Common\TcpServer.h">
@@ -202,6 +214,18 @@
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="Client\MainUI\MainWindow.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="Client\StreamUI\ConnectDialog.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="Client\MainUI\PlayerPage.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="Client\MainUI\LaunchPage.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="Client\ServerUI\ServerPanel.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>
@@ -328,5 +352,8 @@
     <None Include="Notes\MoonLight\第二阶段笔记：UDP网络传输与客户端解码.md" />
     <None Include="Notes\MoonLight\输入事件转发系统技术文档.md" />
     <None Include="Notes\MoonLight\第四阶段笔记：音频串流实现.md" />
+    <None Include="Notes\MoonLight\第六阶段：控制信道改造 + 网络统计与自适应码率 — 详细实现设计.md" />
+    <None Include="Notes\MoonLight\第七阶段：统一客户端应用 — 详细实现设计.md" />
+    <None Include="Notes\MoonLight\第五阶段：抗丢包机制 — 详细实现设计.md" />
   </ItemGroup>
 </Project>

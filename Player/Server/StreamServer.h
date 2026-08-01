@@ -83,7 +83,12 @@ private:
     int consecutive_failures_{0};                                                                       // 连续采集失败计数
     std::atomic<bool> force_next_idr_{false};                                                           // 收到 IDR 请求后下一帧强制 IDR
     BitrateController* bitrate_ctrl_{nullptr};                                                          // 码率自适应控制器
-    int current_bitrate_{0};                                                                            // 当前编码码率
+
+public:
+    // UI 反馈（原子变量，UI 线程可安全读取）
+    std::atomic<uint64_t> frame_count_{0};                                                              // 编码帧计数
+    std::atomic<bool> client_connected_{false};                                                         // 是否已有客户端连接
+    std::atomic<int> current_bitrate_{0};                                                               // 当前实际码率（自适应后变化）
 };
 
 #endif // STREAMSERVER_H

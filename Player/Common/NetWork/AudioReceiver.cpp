@@ -161,7 +161,6 @@ void AudioReceiver::ReceiveLoop()
 
         // 推入队列给 AudioDecoder 消费
         packet_queue_->Push(pkt);
-        qDebug() << "[AudioReceiver] 推入一帧，PTS=" << pkt->pts;
     }
 
     qDebug() << "[AudioReceiver] 接收线程退出";

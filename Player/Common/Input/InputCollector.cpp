@@ -309,6 +309,12 @@ LRESULT CALLBACK InputCollector::KeyboardProc(int nCode, WPARAM wParam, LPARAM l
 {
     if (nCode == HC_ACTION && instance_ && instance_->active_)
     {
+        // 仅当客户端窗口在前台时处理键盘事件（鼠标移到窗口外不应再发键盘）
+        HWND fg = GetForegroundWindow();
+        HWND root = instance_->video_hwnd_ ? GetAncestor(instance_->video_hwnd_, GA_ROOT) : nullptr;
+        if (!root || fg != root)
+            goto pass;
+
         KBDLLHOOKSTRUCT* kb = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
 
         bool down = false;

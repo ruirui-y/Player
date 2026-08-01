@@ -387,6 +387,10 @@ void InputTransportServer::AcceptLoop()
 
         ReceiveLoop(new_sock);
 
+        // 通知上层客户端已断开
+        if (OnClientDisconnected)
+            OnClientDisconnected();
+
         qDebug() << "[InputServer] 等待下一个客户端连接...";
     }
 

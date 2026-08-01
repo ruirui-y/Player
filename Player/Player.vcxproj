@@ -130,8 +130,12 @@
     <ClCompile Include="Client\Core\Reader.cpp" />
     <ClCompile Include="Client\MainUI\ControlBar.cpp" />
     <ClCompile Include="Client\MainUI\FileBrowser.cpp" />
+    <ClCompile Include="Client\MainUI\LaunchPage.cpp" />
+    <ClCompile Include="Client\MainUI\PlayerPage.cpp" />
     <ClCompile Include="Client\MainUI\TitleBar.cpp" />
     <ClCompile Include="Client\MainUI\VideoWidget.cpp" />
+    <ClCompile Include="Client\ServerUI\ServerPanel.cpp" />
+    <ClCompile Include="Client\StreamUI\ConnectDialog.cpp" />
     <ClCompile Include="Client\StreamUI\StreamVideoWidget.cpp" />
     <ClCompile Include="Client\StreamUI\StreamWindow.cpp" />
     <ClCompile Include="Client\Core\VideoDecoder.cpp" />
@@ -169,6 +173,10 @@
   <ItemGroup>
     <ClInclude Include="Client\Core\AudioDecoder.h" />
     <ClInclude Include="Client\Core\RttMeasurer.h" />
+    <QtMoc Include="Client\StreamUI\ConnectDialog.h" />
+    <QtMoc Include="Client\MainUI\LaunchPage.h" />
+    <QtMoc Include="Client\MainUI\PlayerPage.h" />
+    <QtMoc Include="Client\ServerUI\ServerPanel.h" />
     <ClInclude Include="Common\ClockUtil.h" />
     <ClInclude Include="Common\NetWork\NetworkStats.h" />
     <ClInclude Include="Common\SafeQueue.h" />
@@ -229,7 +237,10 @@
     <None Include="Notes\MoonLight\基于 FFmpeg nvenc.c 做录屏迁移.md" />
     <None Include="Notes\MoonLight\基于OBS的屏幕捕获.md" />
     <None Include="Notes\MoonLight\桌面捕获.md" />
+    <None Include="Notes\MoonLight\第七阶段：统一客户端应用 — 详细实现设计.md" />
     <None Include="Notes\MoonLight\第二阶段笔记：UDP网络传输与客户端解码.md" />
+    <None Include="Notes\MoonLight\第五阶段：抗丢包机制 — 详细实现设计.md" />
+    <None Include="Notes\MoonLight\第六阶段：控制信道改造 + 网络统计与自适应码率 — 详细实现设计.md" />
     <None Include="Notes\MoonLight\第四阶段笔记：音频串流实现.md" />
     <None Include="Notes\MoonLight\输入事件转发系统技术文档.md" />
     <None Include="Notes\从 CPU 到 GPU 的演进总结.md" />

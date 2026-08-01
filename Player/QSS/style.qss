@@ -1,298 +1,300 @@
-﻿/* ===== MainWindow ===== */
-MainWindow {
-    background-color: #1e1e1e;
+﻿/* ================================================================
+   Player — 统一暗色主题 QSS（1200×800 基准）
+   ================================================================ */
+
+/* ===== 全局 ===== */
+QWidget {
+    background-color: #1a1a2e;
+    color: #e0e0e0;
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
 }
 
-/* ===== VideoWidget（视频窗口保持纯黑） ===== */
-VideoWidget {
-    background-color: black;
+/* ===== 启动页 LaunchPage ===== */
+#LaunchPage { background-color: #1a1a2e; }
+#LaunchTitle {
+    font-size: 36px;
+    font-weight: bold;
+    color: #e0e0e0;
 }
+#LaunchVersion { color: #555; font-size: 14px; }
+QPushButton#LaunchBtn {
+    background-color: #16213e;
+    color: #e0e0e0;
+    border: 2px solid #0f3460;
+    border-radius: 14px;
+    font-size: 22px;
+    font-weight: bold;
+    padding: 20px;
+    min-height: 100px;
+}
+QPushButton#LaunchBtn:hover { background-color: #0f3460; border-color: #e94560; }
+QPushButton#LaunchBtn:pressed { background-color: #1a1a3e; }
+
+/* ===== 连接对话框 ConnectDialog ===== */
+#ConnectDialog { background-color: #1a1a2e; }
+#ConnectTitle {
+    font-size: 26px;
+    font-weight: bold;
+    color: #e0e0e0;
+}
+QLineEdit#ConnectIpEdit {
+    background-color: #16213e;
+    color: #e0e0e0;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 16px;
+}
+QSpinBox#ConnectSpin {
+    background-color: #16213e;
+    color: #e0e0e0;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    padding: 7px;
+    font-size: 16px;
+}
+QLabel#ConnectRecentLabel { color: #777; font-size: 15px; font-weight: bold; }
+QListWidget#ConnectRecentList {
+    background-color: #16213e;
+    color: #e0e0e0;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    font-size: 14px;
+}
+QListWidget#ConnectRecentList::item { padding: 6px; }
+QListWidget#ConnectRecentList::item:hover { background-color: #0f3460; }
+QPushButton#ConnectBtn {
+    background-color: #e94560;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 28px;
+    font-size: 16px;
+    font-weight: bold;
+}
+QPushButton#ConnectBtn:hover { background-color: #ff6b6b; }
+QPushButton#ConnectBackBtn {
+    background-color: #333;
+    color: #e0e0e0;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 28px;
+    font-size: 16px;
+}
+QPushButton#ConnectBackBtn:hover { background-color: #555; }
+
+/* ===== 被控端面板 ServerPanel ===== */
+#ServerPanel { background-color: #1a1a2e; }
+#ServerTitle {
+    font-size: 26px;
+    font-weight: bold;
+    color: #e0e0e0;
+}
+#ServerIpLabel { color: #4ecdc4; font-size: 18px; font-weight: bold; }
+QSpinBox#ServerSpin {
+    background-color: #16213e;
+    color: #e0e0e0;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    padding: 7px;
+    font-size: 15px;
+}
+QRadioButton#ServerRadio { color: #e0e0e0; font-size: 14px; }
+QGroupBox#ServerStatusGroup {
+    color: #777;
+    border: 1px solid #0f3460;
+    border-radius: 10px;
+    margin-top: 12px;
+    padding: 14px;
+    font-size: 14px;
+}
+QGroupBox#ServerStatusGroup::title { subcontrol-origin: margin; left: 10px; }
+QLabel#ServerStatValue {
+    color: #4ecdc4;
+    font-size: 16px;
+    font-weight: bold;
+}
+QLabel#ServerClientStatus { color: #ffa500; font-size: 16px; }
+QPushButton#ServerStartBtn {
+    background-color: #4ecdc4;
+    color: #1a1a2e;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 28px;
+    font-size: 16px;
+    font-weight: bold;
+}
+QPushButton#ServerStartBtn:hover { background-color: #6eece0; }
+QPushButton#ServerStartBtn[stopped="false"] { background-color: #e94560; color: white; }
+QPushButton#ServerStartBtn[stopped="false"]:hover { background-color: #ff6b6b; }
+QPushButton#ServerBackBtn {
+    background-color: #333;
+    color: #e0e0e0;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 28px;
+    font-size: 16px;
+}
+QPushButton#ServerBackBtn:hover { background-color: #555; }
+
+/* ===== TitleBar 标题栏 ===== */
+QWidget#TitleBar {
+    background-color: #121830;
+    border-bottom: 1px solid #3a3a3a;
+    min-height: 36px;
+    max-height: 36px;
+}
+#TitleLabel {
+    background-color: transparent;
+    color: #ccc;
+    font-size: 14px;
+    padding-left: 14px;
+}
+QPushButton#TitleBtnBack {
+    background-color: transparent;
+    color: #888;
+    border: none;
+    font-size: 16px;
+    min-width: 36px;
+    min-height: 36px;
+}
+QPushButton#TitleBtnBack:hover { color: #fff; background-color: #333; }
+#TitleBtnMin, #TitleBtnMax, #TitleBtnClose {
+    background-color: transparent;
+    color: #666;
+    border: none;
+    font-size: 18px;
+    min-width: 36px;
+    min-height: 36px;
+}
+#TitleBtnMin:hover, #TitleBtnMax:hover { color: #fff; background-color: #333; }
+#TitleBtnClose:hover { color: #fff; background-color: #d93025; }
+
+/* ===== MainWindow ===== */
+MainWindow { background-color: #1a1a2e; }
+
+/* ===== VideoWidget ===== */
+VideoWidget { background-color: black; }
 
 /* ===== ControlBar ===== */
 ControlBar {
-    background-color: #181818;
-    border-top: 1px solid #2a2a2a;
+    background-color: #0d0d1a;
+    border-top: 1px solid #1a1a3a;
+    min-height: 44px;
 }
-
-/* 播放/暂停按钮 */
 #PlayBtn {
     background-color: transparent;
     color: #e0e0e0;
     border: none;
     border-radius: 6px;
-    font-size: 18px;
-    min-width: 36px;
-    min-height: 36px;
+    font-size: 20px;
+    min-width: 40px;
+    min-height: 40px;
 }
-#PlayBtn:hover {
-    background-color: #333;
-    color: #fff;
-}
-#PlayBtn:pressed {
-    background-color: #444;
-}
+#PlayBtn:hover { background-color: #222; color: #fff; }
+#PlayBtn:pressed { background-color: #333; }
 
-/* 进度条 */
-#SeekBar {
-    height: 20px;
-}
-#SeekBar::groove:horizontal {
-    height: 4px;
-    background: #333;
-    border-radius: 2px;
-}
+#SeekBar { height: 22px; }
+#SeekBar::groove:horizontal { height: 4px; background: #222; border-radius: 2px; }
 #SeekBar::handle:horizontal {
-    width: 14px;
-    height: 14px;
-    margin: -5px 0;
-    border-radius: 7px;
-    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
-        stop:0 #fff, stop:0.7 #eee, stop:1 #ccc);
-    border: 2px solid #555;
+    width: 14px; height: 14px; margin: -5px 0; border-radius: 7px;
+    background: qradialgradient(cx:0.5,cy:0.5,radius:0.5,stop:0 #fff,stop:0.7 #eee,stop:1 #ccc);
+    border: 2px solid #444;
 }
 #SeekBar::handle:horizontal:hover {
-    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
-        stop:0 #fff, stop:0.7 #fff, stop:1 #eee);
-    border-color: #1a73e8;
+    background: qradialgradient(cx:0.5,cy:0.5,radius:0.5,stop:0 #fff,stop:0.7 #fff,stop:1 #eee);
+    border-color: #4a9eff;
 }
 #SeekBar::sub-page:horizontal {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 #1a73e8, stop:1 #4a9eff);
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #4a9eff,stop:1 #1a73e8);
     border-radius: 2px;
 }
 
-/* 时间标签 */
 #TimeLabel {
-    color: #999;
-    font-size: 12px;
-    font-family: "Consolas", "Courier New", monospace;
-    padding: 0 6px;
-    min-width: 110px;
+    color: #777;
+    font-size: 13px;
+    font-family: "Consolas", monospace;
+    padding: 0 8px;
+    min-width: 120px;
 }
 
-/* 音量滑块 */
-#VolSlider {
-    height: 20px;
-    min-width: 60px;
-}
-#VolSlider::groove:horizontal {
-    height: 3px;
-    background: #333;
-    border-radius: 1.5px;
-}
-#VolSlider::handle:horizontal {
-    width: 10px;
-    height: 10px;
-    margin: -3.5px 0;
-    border-radius: 5px;
-    background: #ccc;
-}
-#VolSlider::handle:horizontal:hover {
-    background: #fff;
-}
-#VolSlider::sub-page:horizontal {
-    background: #1a73e8;
-    border-radius: 1.5px;
-}
+#VolSlider { height: 20px; min-width: 70px; }
+#VolSlider::groove:horizontal { height: 3px; background: #222; border-radius: 1.5px; }
+#VolSlider::handle:horizontal { width: 10px; height: 10px; margin: -3.5px 0; border-radius: 5px; background: #666; }
+#VolSlider::handle:horizontal:hover { background: #fff; }
+#VolSlider::sub-page:horizontal { background: #4a9eff; border-radius: 1.5px; }
 
-/* 文件夹/文件浏览器切换按钮 */
 #FolderBtn {
     background-color: transparent;
-    color: #888;
+    color: #666;
     border: none;
-    font-size: 18px;
-    min-width: 36px;
-    min-height: 36px;
+    font-size: 20px;
+    min-width: 40px; min-height: 40px;
     border-radius: 6px;
 }
-#FolderBtn:hover {
-    background-color: #333;
-    color: #e0e0e0;
-}
-#FolderBtn:checked {
-    color: #4a9eff;
-    background-color: #1a3a5c;
-}
-#FolderBtn:checked:hover {
-    background-color: #1e4a7a;
-}
+#FolderBtn:hover { background-color: #222; color: #e0e0e0; }
+#FolderBtn:checked { color: #4a9eff; background-color: #16213e; }
+#FolderBtn:checked:hover { background-color: #1a3060; }
 
-/* ===== TitleBar 标题栏 ===== */
-#TitleBar {
-    background-color: #141414;
-    border-bottom: 1px solid #2a2a2a;
-}
-
-#TitleLabel {
-    color: #aaa;
-    font-size: 12px;
-    padding-left: 12px;
-    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-}
-
-#TitleBtnMin, #TitleBtnMax, #TitleBtnClose {
-    background-color: transparent;
-    color: #888;
-    border: none;
-    font-size: 12px;
-    min-width: 36px;
-    min-height: 28px;
-}
-#TitleBtnMin:hover, #TitleBtnMax:hover {
-    color: #fff;
-    background-color: #333;
-}
-#TitleBtnClose:hover {
-    color: #fff;
-    background-color: #e81123;
-}
-
-/* ===== FileBrowser 文件浏览器面板 ===== */
-#FileBrowser {
-    background-color: #1a1a1a;
-    border-left: 1px solid #2a2a2a;
-}
-
-/* 顶部工具栏 */
+/* ===== FileBrowser ===== */
+#FileBrowser { background-color: #12122a; border-left: 1px solid #1a1a3a; }
 #FileBrowserTopBar {
-    background-color: #1e1e1e;
-    border-bottom: 1px solid #2a2a2a;
-    padding: 4px;
+    background-color: #16162e;
+    border-bottom: 1px solid #1a1a3a;
+    padding: 6px;
 }
-
-/* 文件夹路径标签 */
 #PathLabel {
-    color: #888;
-    font-size: 11px;
-    padding: 6px 10px;
-    background-color: #141414;
-    border: 1px solid #2a2a2a;
-    border-radius: 4px;
-    margin: 4px 6px;
-}
-
-/* 选择文件夹按钮 */
-#SelectFolderBtn {
-    background-color: #2a2a2a;
-    color: #ccc;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
-    padding: 5px 12px;
-    font-size: 11px;
-    margin: 4px 6px;
-}
-#SelectFolderBtn:hover {
-    background-color: #3a3a3a;
-    color: #fff;
-    border-color: #4a9eff;
-}
-#SelectFolderBtn:pressed {
-    background-color: #444;
-}
-
-/* 树形视图（文件列表） */
-#FileTree {
-    background-color: #1a1a1a;
-    color: #ccc;
-    border: none;
+    color: #666;
     font-size: 12px;
-    outline: none;
-    show-decoration-selected: 0;
-}
-#FileTree::item {
-    padding: 4px 8px;
-    border: none;
+    padding: 6px 10px;
+    background-color: #0d0d1a;
+    border: 1px solid #1a1a3a;
     border-radius: 4px;
-    margin: 1px 4px;
 }
-#FileTree::item:selected {
-    background-color: #1a3a5c;
+#SelectFolderBtn {
+    background-color: #1a1a3a;
+    color: #999;
+    border: 1px solid #2a2a4a;
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: 12px;
+}
+#SelectFolderBtn:hover { background-color: #2a2a4a; color: #fff; border-color: #4a9eff; }
+
+#FileTree {
+    background-color: #12122a;
+    color: #ccc;
+    border: none;
+    font-size: 13px;
+}
+#FileTree::item { padding: 5px 10px; border-radius: 4px; margin: 1px 4px; }
+#FileTree::item:selected { background-color: #16213e; color: #e0e0e0; }
+#FileTree::item:hover { background-color: #1a1a2e; color: #e0e0e0; }
+
+QSplitter::handle { background-color: #1a1a3a; width: 3px; }
+
+/* ===== 详情对话框 DetailsDialog ===== */
+#DetailsDialog {
+    background-color: #1a1a3a;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+}
+#DetailsLabel { color: #aaa; font-size: 14px; }
+
+/* ===== 通用返回按钮 ===== */
+QPushButton#BackBtn {
+    background-color: #333;
     color: #e0e0e0;
     border: none;
+    border-radius: 10px;
+    padding: 12px 28px;
+    font-size: 16px;
 }
-#FileTree::item:selected:active {
-    background-color: #1a73e8;
-    color: #fff;
-}
-#FileTree::item:hover {
-    background-color: #2a2a2a;
-    color: #e0e0e0;
-}
-#FileTree::branch:has-children:closed {
-    border-image: none;
-    image: none;
-}
-#FileTree::branch:has-children:open {
-    border-image: none;
-    image: none;
-}
+QPushButton#BackBtn:hover { background-color: #555; }
 
-/* 树形视图表头（隐藏） */
-#FileTree QHeaderView::section {
-    background-color: #222;
-    color: #777;
-    border: none;
-    border-bottom: 1px solid #333;
-    font-size: 11px;
-    padding: 4px 8px;
-}
-
-/* 垂直滚动条 */
-QTreeView QScrollBar:vertical {
-    background: transparent;
-    width: 8px;
-    margin: 0;
-}
-QTreeView QScrollBar::handle:vertical {
-    background-color: #444;
-    min-height: 30px;
-    border-radius: 4px;
-    margin: 2px;
-}
-QTreeView QScrollBar::handle:vertical:hover {
-    background-color: #666;
-}
-QTreeView QScrollBar::handle:vertical:pressed {
-    background-color: #888;
-}
-QTreeView QScrollBar::add-line:vertical,
-QTreeView QScrollBar::sub-line:vertical {
-    height: 0;
-}
-QTreeView QScrollBar::add-page:vertical,
-QTreeView QScrollBar::sub-page:vertical {
-    background: none;
-}
-
-/* 水平滚动条 */
-QTreeView QScrollBar:horizontal {
-    background: transparent;
-    height: 8px;
-    margin: 0;
-}
-QTreeView QScrollBar::handle:horizontal {
-    background-color: #444;
-    min-width: 30px;
-    border-radius: 4px;
-    margin: 2px;
-}
-QTreeView QScrollBar::handle:horizontal:hover {
-    background-color: #666;
-}
-QTreeView QScrollBar::handle:horizontal:pressed {
-    background-color: #888;
-}
-QTreeView QScrollBar::add-line:horizontal,
-QTreeView QScrollBar::sub-line:horizontal {
-    width: 0;
-}
-QTreeView QScrollBar::add-page:horizontal,
-QTreeView QScrollBar::sub-page:horizontal {
-    background: none;
-}
-
-/* 分割线 */
-QSplitter::handle {
-    background-color: #2a2a2a;
-    width: 3px;
+/* ===== 表单标签 ===== */
+#FormLabel {
+    color: #bbb;
+    font-size: 16px;
+    font-weight: bold;
 }

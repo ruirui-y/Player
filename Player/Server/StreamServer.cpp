@@ -141,7 +141,7 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
     }
 
     // ---- 第六阶段：初始化码率自适应控制器 ----
-    current_bitrate_ = bitrate_kbps;
+    current_bitrate_.store(bitrate_kbps);
     bitrate_ctrl_ = new BitrateController(bitrate_kbps);
 
     // ---- 第六步：初始化 UDP 发送器 ----
@@ -196,6 +196,7 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
     // 收到客户端输入事件 → 注入到本地系统
     input_server_->OnInputEvent = [this](const InputMessage& msg)
     {
+        client_connected_.store(true);
         if (input_injector_)
             input_injector_->Inject(msg);
     };
@@ -203,6 +204,8 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
     // 收到客户端控制消息（新签名：type + payload）
     input_server_->OnControlMessage = [this](uint8_t msg_type, const uint8_t* payload, int payload_len)
     {
+        client_connected_.store(true);
+
         if (msg_type == 0x01)                               // RequestIDR
         {
             force_next_idr_.store(true);
@@ -215,11 +218,11 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
             if (bitrate_ctrl_)
             {
                 int new_bitrate = bitrate_ctrl_->OnStatsReport(stats);
-                if (new_bitrate != current_bitrate_ && encoder_)
+                if (new_bitrate != current_bitrate_.load() && encoder_)
                 {
                     if (encoder_->SetBitrate(new_bitrate))
                     {
-                        current_bitrate_ = new_bitrate;
+                        current_bitrate_.store(new_bitrate);
                         LogManager::Log("INFO", "[StreamServer] 码率自适应: %d kbps", new_bitrate);
                     }
                 }
@@ -239,6 +242,13 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
             force_next_idr_.store(true);
             LogManager::Log("INFO", "[StreamServer] 收到 IDR 请求(legacy)，下一帧将编码为 IDR");
         }
+    };
+
+    // 客户端断开通知
+    input_server_->OnClientDisconnected = [this]()
+    {
+        client_connected_.store(false);
+        LogManager::Log("INFO", "[StreamServer] 客户端已断开");
     };
 
     input_server_->Start();
@@ -375,6 +385,7 @@ void StreamServer::Run()
         }
 
         ++frame_index;
+        ++frame_count_;
 
         // ---- 帧率限制：剩余时间休眠 ----
         auto elapsed = std::chrono::steady_clock::now() - frame_start;
