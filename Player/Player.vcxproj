@@ -120,6 +120,7 @@
   <ItemGroup>
     <ClCompile Include="Client\Core\AudioDecoder.cpp" />
     <ClCompile Include="Client\Core\AudioRenderer.cpp" />
+    <ClCompile Include="Client\Core\Pacer.cpp" />
     <ClCompile Include="Client\Core\RttMeasurer.cpp" />
     <ClCompile Include="Client\Core\StreamAudioRenderer.cpp" />
     <ClCompile Include="Client\Core\FFmpegPlayer.cpp" />
@@ -172,6 +173,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Client\Core\AudioDecoder.h" />
+    <ClInclude Include="Client\Core\Pacer.h" />
     <ClInclude Include="Client\Core\RttMeasurer.h" />
     <QtMoc Include="Client\StreamUI\ConnectDialog.h" />
     <QtMoc Include="Client\MainUI\LaunchPage.h" />

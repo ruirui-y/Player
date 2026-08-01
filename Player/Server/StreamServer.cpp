@@ -422,8 +422,8 @@ void StreamServer::OnAudioData(const int16_t* pcm_data, int sample_count, uint32
                         sample_count, timestamp_ms);
     }
 
-    // ---- 每 500 帧（约 10 秒）打印一次统计 ----
-    if (audio_frame_index_ > 0 && audio_frame_index_ % 500 == 0)
+    // ---- 每 3000帧打印一次 (1min) 打印一次统计 ----
+    if (audio_frame_index_ > 0 && audio_frame_index_ % 3000 == 0)
     {
         LogManager::Log("INFO", "[StreamServer] 音频统计: 已发送 %u 帧, buffer=%zu",
                         audio_frame_index_, audio_pcm_buffer_.size());

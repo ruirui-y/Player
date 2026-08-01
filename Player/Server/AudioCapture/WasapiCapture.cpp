@@ -276,11 +276,11 @@ void WasapiCapture::CaptureLoop()
         if (packet_length == 0)
         {
             empty_packet_count++;
-            if (empty_packet_count % 1000 == 1)
-            {
-                LogManager::Log("INFO", "[WasapiCapture] 等待数据... 空包计数=%llu",
-                                (unsigned long long)empty_packet_count);
-            }
+            //if (empty_packet_count % 1000 == 1)
+            //{
+            //    LogManager::Log("INFO", "[WasapiCapture] 等待数据... 空包计数=%llu",
+            //                    (unsigned long long)empty_packet_count);
+            //}
             Sleep(1);
             continue;
         }

@@ -44,10 +44,24 @@ bool InputTransportClient::Connect(const char* server_ip, uint16_t port)
         return false;
     }
 
-    // ---- 第三步：禁用 Nagle 算法 ----
+    // ---- 第三步：禁用 Nagle + 启用 KeepAlive ----
     int nodelay = 1;
     setsockopt(sock_, IPPROTO_TCP, TCP_NODELAY,
                (const char*)&nodelay, sizeof(nodelay));
+
+    int keepalive = 1;
+    setsockopt(sock_, SOL_SOCKET, SO_KEEPALIVE,
+               (const char*)&keepalive, sizeof(keepalive));
+
+    // Windows 半开源: 10 秒空闲 → 1 秒间隔 × 3 次探测 → 超时断开
+    DWORD ka_time = 10000, ka_interval = 1000;
+    setsockopt(sock_, IPPROTO_TCP, TCP_KEEPIDLE,
+               (const char*)&ka_time, sizeof(ka_time));
+    setsockopt(sock_, IPPROTO_TCP, TCP_KEEPINTVL,
+               (const char*)&ka_interval, sizeof(ka_interval));
+    DWORD ka_cnt = 3;
+    setsockopt(sock_, IPPROTO_TCP, TCP_KEEPCNT,
+               (const char*)&ka_cnt, sizeof(ka_cnt));
 
     // ---- 第四步：连接服务端 ----
     sockaddr_in addr{};
@@ -362,6 +376,17 @@ void InputTransportServer::AcceptLoop()
         int nodelay = 1;
         setsockopt(new_sock, IPPROTO_TCP, TCP_NODELAY,
                    (const char*)&nodelay, sizeof(nodelay));
+
+        int keepalive = 1;
+        setsockopt(new_sock, SOL_SOCKET, SO_KEEPALIVE,
+                   (const char*)&keepalive, sizeof(keepalive));
+        DWORD ka_time = 10000, ka_interval = 1000, ka_cnt = 3;
+        setsockopt(new_sock, IPPROTO_TCP, TCP_KEEPIDLE,
+                   (const char*)&ka_time, sizeof(ka_time));
+        setsockopt(new_sock, IPPROTO_TCP, TCP_KEEPINTVL,
+                   (const char*)&ka_interval, sizeof(ka_interval));
+        setsockopt(new_sock, IPPROTO_TCP, TCP_KEEPCNT,
+                   (const char*)&ka_cnt, sizeof(ka_cnt));
 
         char ip_str[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, ip_str, sizeof(ip_str));

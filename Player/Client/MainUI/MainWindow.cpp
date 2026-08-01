@@ -9,7 +9,12 @@
 #include <QVBoxLayout>
 #include <QKeyEvent>
 #include <QCloseEvent>
+#include <QMoveEvent>
 #include <QApplication>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QCursor>
+#include <QWindow>
 #include <QDebug>
 
 MainWindow::MainWindow(PlayerApp* app, QWidget* parent)
@@ -220,11 +225,22 @@ void MainWindow::OnConnect(const QString& ip, uint16_t port,
 
 void MainWindow::ToggleFullScreen()
 {
-    fullscreen_ = !fullscreen_;
     if (fullscreen_)
-        showFullScreen();
-    else
+    {
+        // 同屏 → 正常退出
+        fullscreen_ = false;
         showNormal();
+        return;
+    }
+
+    // 进入全屏：记录所在屏幕
+    auto* screen = QGuiApplication::screenAt(QCursor::pos());
+    if (!screen) return;
+
+    fullscreen_ = true;
+    if (auto* handle = windowHandle())
+        handle->setScreen(screen);
+    showFullScreen();
 }
 
 void MainWindow::keyPressEvent(QKeyEvent* event)
