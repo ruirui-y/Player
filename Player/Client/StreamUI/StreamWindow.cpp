@@ -218,3 +218,10 @@ void StreamWindow::StopInput()
         input_transport_ = nullptr;
     }
 }
+
+// ---- 嵌入模式：隐藏内部 TitleBar，由 MainWindow 统一管理 ----
+void StreamWindow::SetEmbedded(bool embedded)
+{
+    if (title_bar_)
+        title_bar_->setVisible(!embedded);
+}
