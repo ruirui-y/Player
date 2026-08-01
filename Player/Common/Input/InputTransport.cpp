@@ -2,13 +2,14 @@
 
 #include <WS2tcpip.h>
 #include <cstring>
+#include <cstdio>
 #include <string>
 #include <QDebug>
 
 #pragma comment(lib, "ws2_32.lib")
 
 // ================================================================
-// ============== 客户端：TCP 连接 + 发送 ==============
+// ============== 客户端：TCP 连接 + 发送 + 接收 ==============
 // ================================================================
 
 InputTransportClient::InputTransportClient()
@@ -43,7 +44,7 @@ bool InputTransportClient::Connect(const char* server_ip, uint16_t port)
         return false;
     }
 
-    // ---- 第三步：禁用 Nagle 算法（降低小包延迟） ----
+    // ---- 第三步：禁用 Nagle 算法 ----
     int nodelay = 1;
     setsockopt(sock_, IPPROTO_TCP, TCP_NODELAY,
                (const char*)&nodelay, sizeof(nodelay));
@@ -83,12 +84,29 @@ bool InputTransportClient::Connect(const char* server_ip, uint16_t port)
         monitor_info_.monitor_x, monitor_info_.monitor_y,
         monitor_info_.virtual_width, monitor_info_.virtual_height;
 
+    // ---- 第六阶段新增：启动服务端消息接收线程 ----
+    if (msg_handler_)
+    {
+        recv_running_ = true;
+        recv_thread_ = std::thread(&InputTransportClient::ClientReceiveLoop, this);
+    }
+
     return true;
 }
 
 // 断开连接
 void InputTransportClient::Disconnect()
 {
+    // 停止接收线程
+    if (recv_running_)
+    {
+        recv_running_ = false;
+        if (sock_ != INVALID_SOCKET)
+            shutdown(sock_, SD_RECEIVE);                    // 让 recv 退出
+        if (recv_thread_.joinable())
+            recv_thread_.join();
+    }
+
     if (sock_ != INVALID_SOCKET)
     {
         closesocket(sock_);
@@ -111,31 +129,90 @@ bool InputTransportClient::Send(const InputMessage& msg)
     return ret == sizeof(InputMessage);
 }
 
-// 发送一条 JSON 控制消息（格式：0xFF + 2字节长度 + JSON）
-bool InputTransportClient::SendControlMessage(const char* msg_type)
+// 发送控制消息（二进制协议：0xFF + 1字节type + 2字节len + payload）
+bool InputTransportClient::SendControlMessage(uint8_t msg_type,
+    const uint8_t* payload, int payload_len)
 {
     if (sock_ == INVALID_SOCKET)
         return false;
 
-    // 构造 JSON：{ "type": "request_idr" }
+    if (payload_len < 0 || payload_len > 1024)
+        return false;
+
+    uint8_t buffer[1032];                                   // 4 字节头 + 最大 1024 字节负载
+    buffer[0] = CONTROL_MSG_MARKER;
+    buffer[1] = msg_type;
+    uint16_t len_be = htons(static_cast<uint16_t>(payload_len));
+    std::memcpy(buffer + 2, &len_be, 2);
+    if (payload && payload_len > 0)
+        std::memcpy(buffer + 4, payload, payload_len);
+
+    int ret = send(sock_, (const char*)buffer, 4 + payload_len, 0);
+    return ret == 4 + payload_len;
+}
+
+// 兼容旧接口：字符串 → type=0x01 + JSON payload
+bool InputTransportClient::SendControlMessage(const char* msg_type_str)
+{
     char json[64];
-    int json_len = snprintf(json, sizeof(json), R"({"type":"%s"})", msg_type);
+    int json_len = snprintf(json, sizeof(json), R"({"type":"%s"})", msg_type_str);
     if (json_len <= 0 || json_len >= (int)sizeof(json))
         return false;
 
-    // 包格式：1 字节标记 + 2 字节长度（大端）+ JSON
-    uint8_t buffer[128];
-    buffer[0] = CONTROL_MSG_MARKER;
-    uint16_t len_be = htons(static_cast<uint16_t>(json_len));
-    std::memcpy(buffer + 1, &len_be, 2);
-    std::memcpy(buffer + 3, json, json_len);
+    return SendControlMessage(0x01, (const uint8_t*)json, json_len);
+}
 
-    int ret = send(sock_, (const char*)buffer, 3 + json_len, 0);
-    return ret == 3 + json_len;
+// 设置服务端消息处理回调
+void InputTransportClient::SetMessageHandler(
+    std::function<void(uint8_t, const uint8_t*, int)> handler)
+{
+    msg_handler_ = std::move(handler);
+}
+
+// 客户端接收线程：循环 recv 服务端发送的消息
+void InputTransportClient::ClientReceiveLoop()
+{
+    uint8_t recv_buf[1032];
+
+    while (recv_running_)
+    {
+        // ---- 先读 1 字节 ----
+        uint8_t first_byte;
+        int ret = recv(sock_, (char*)&first_byte, 1, MSG_WAITALL);
+        if (ret <= 0)
+            break;
+
+        if (first_byte != CONTROL_MSG_MARKER)
+            continue;                                       // 非控制消息，跳过
+
+        // ---- 读 type + len ----
+        uint8_t buf3[3];
+        ret = recv(sock_, (char*)buf3, 3, MSG_WAITALL);
+        if (ret != 3)
+            break;
+
+        uint8_t msg_type = buf3[0];
+        uint16_t payload_len;
+        std::memcpy(&payload_len, buf3 + 1, 2);
+        payload_len = ntohs(payload_len);
+
+        if (payload_len == 0 || payload_len > 1024)
+            continue;
+
+        // ---- 读 payload ----
+        ret = recv(sock_, (char*)recv_buf, payload_len, MSG_WAITALL);
+        if (ret != (int)payload_len)
+            break;
+
+        if (msg_handler_)
+            msg_handler_(msg_type, recv_buf, payload_len);
+    }
+
+    qDebug() << "[InputClient] 接收线程退出";
 }
 
 // ================================================================
-// ============== 服务端：TCP 监听 + 接收 ==============
+// ============== 服务端：TCP 监听 + 接收输入 + 控制消息 + 发送 ==============
 // ================================================================
 
 InputTransportServer::InputTransportServer()
@@ -150,7 +227,6 @@ InputTransportServer::~InputTransportServer()
 // 开始监听
 bool InputTransportServer::Listen(uint16_t port)
 {
-    // ---- 第一步：初始化 Winsock ----
     WSADATA wsa_data;
     int err = WSAStartup(MAKEWORD(2, 2), &wsa_data);
     if (err != 0)
@@ -160,7 +236,6 @@ bool InputTransportServer::Listen(uint16_t port)
     }
     wsa_started_ = true;
 
-    // ---- 第二步：创建 TCP 监听 socket ----
     listen_sock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (listen_sock_ == INVALID_SOCKET)
     {
@@ -170,12 +245,10 @@ bool InputTransportServer::Listen(uint16_t port)
         return false;
     }
 
-    // ---- 第三步：设置地址复用（避免 TIME_WAIT 导致 bind 失败） ----
     int reuse = 1;
     setsockopt(listen_sock_, SOL_SOCKET, SO_REUSEADDR,
                (const char*)&reuse, sizeof(reuse));
 
-    // ---- 第四步：绑定端口 ----
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -191,7 +264,6 @@ bool InputTransportServer::Listen(uint16_t port)
         return false;
     }
 
-    // ---- 第五步：开始监听 ----
     if (listen(listen_sock_, 1) == SOCKET_ERROR)
     {
         qDebug() << "[InputServer] listen 失败:" << WSAGetLastError();
@@ -206,7 +278,6 @@ bool InputTransportServer::Listen(uint16_t port)
     return true;
 }
 
-// 启动接受连接线程
 void InputTransportServer::Start()
 {
     if (running_)
@@ -216,14 +287,12 @@ void InputTransportServer::Start()
     accept_thread_ = std::thread(&InputTransportServer::AcceptLoop, this);
 }
 
-// 设置客户端连接后发送的显示器信息
 void InputTransportServer::SetMonitorInfo(const ServerMonitorInfo& info)
 {
     monitor_info_ = info;
     has_monitor_info_ = true;
 }
 
-// 停止
 void InputTransportServer::Stop()
 {
     if (!running_)
@@ -231,14 +300,12 @@ void InputTransportServer::Stop()
 
     running_ = false;
 
-    // 关闭监听 socket 让 accept 退出
     if (listen_sock_ != INVALID_SOCKET)
     {
         closesocket(listen_sock_);
         listen_sock_ = INVALID_SOCKET;
     }
 
-    // 关闭客户端 socket 让 recv 退出
     if (client_sock_ != INVALID_SOCKET)
     {
         closesocket(client_sock_);
@@ -257,22 +324,41 @@ void InputTransportServer::Stop()
     qDebug() << "[InputServer] 已停止";
 }
 
-// 接受连接线程（循环等待，客户端断开后重新 accept）
+// 发送消息到当前客户端
+bool InputTransportServer::SendToClient(uint8_t msg_type, const uint8_t* payload, int payload_len)
+{
+    if (client_sock_ == INVALID_SOCKET)
+        return false;
+
+    if (payload_len < 0 || payload_len > 1024)
+        return false;
+
+    uint8_t buffer[1032];
+    buffer[0] = CONTROL_MSG_MARKER;
+    buffer[1] = msg_type;
+    uint16_t len_be = htons(static_cast<uint16_t>(payload_len));
+    std::memcpy(buffer + 2, &len_be, 2);
+    if (payload && payload_len > 0)
+        std::memcpy(buffer + 4, payload, payload_len);
+
+    int ret = send(client_sock_, (const char*)buffer, 4 + payload_len, 0);
+    return ret == 4 + payload_len;
+}
+
+// 接受连接线程
 void InputTransportServer::AcceptLoop()
 {
     qDebug() << "[InputServer] 等待客户端连接...";
 
     while (running_)
     {
-        // ---- 阻塞等待客户端连接 ----
         sockaddr_in client_addr{};
         int addr_len = sizeof(client_addr);
         SOCKET new_sock = accept(listen_sock_, (sockaddr*)&client_addr, &addr_len);
 
         if (!running_ || new_sock == INVALID_SOCKET)
-            break;                                                      // 服务端停止或监听 socket 已关闭
+            break;
 
-        // ---- 禁用 Nagle 算法 ----
         int nodelay = 1;
         setsockopt(new_sock, IPPROTO_TCP, TCP_NODELAY,
                    (const char*)&nodelay, sizeof(nodelay));
@@ -283,7 +369,6 @@ void InputTransportServer::AcceptLoop()
 
         client_sock_ = new_sock;
 
-        // ---- 发送显示器信息（客户端需要此信息做正确的坐标映射） ----
         if (has_monitor_info_)
         {
             int ret = send(new_sock, (const char*)&monitor_info_, sizeof(ServerMonitorInfo), 0);
@@ -292,7 +377,7 @@ void InputTransportServer::AcceptLoop()
                 qDebug() << "[InputServer] 发送显示器信息失败, ret =" << ret;
                 closesocket(new_sock);
                 client_sock_ = INVALID_SOCKET;
-                continue;                                               // 关闭当前连接，继续等待下一个
+                continue;
             }
             qDebug() << "[InputServer] 已发送显示器信息: capture=%dx%d  offset=(%d,%d)  virtual=%dx%d",
                 monitor_info_.capture_width, monitor_info_.capture_height,
@@ -300,9 +385,6 @@ void InputTransportServer::AcceptLoop()
                 monitor_info_.virtual_width, monitor_info_.virtual_height;
         }
 
-        // ---- 同步运行接收循环，直到客户端断开 ----
-        // 不再启动新线程：AcceptLoop 线程直接执行 ReceiveLoop
-        // recv 返回 <= 0 时退出 ReceiveLoop，回到 while 循环顶部重新 accept
         ReceiveLoop(new_sock);
 
         qDebug() << "[InputServer] 等待下一个客户端连接...";
@@ -311,7 +393,7 @@ void InputTransportServer::AcceptLoop()
     qDebug() << "[InputServer] 接受连接线程退出";
 }
 
-// 接收数据线程
+// 接收数据线程（新协议：0xFF + type + len + payload）
 void InputTransportServer::ReceiveLoop(SOCKET client_sock)
 {
     while (running_)
@@ -328,45 +410,51 @@ void InputTransportServer::ReceiveLoop(SOCKET client_sock)
 
         if (first_byte == CONTROL_MSG_MARKER)
         {
-            // ---- 控制消息：读 2 字节长度 + JSON 字符串 ----
-            uint16_t len_be;
-            ret = recv(client_sock, (char*)&len_be, 2, MSG_WAITALL);
-            if (ret != 2)
+            // ---- 控制消息：读 1 字节 type + 2 字节 len + payload ----
+            uint8_t buf3[3];
+            ret = recv(client_sock, (char*)buf3, 3, MSG_WAITALL);
+            if (ret != 3)
                 break;
 
-            uint16_t json_len = ntohs(len_be);
-            if (json_len == 0 || json_len > 256)
-                continue;                                       // 不合理的长度
+            uint8_t msg_type = buf3[0];
+            uint16_t payload_len;
+            std::memcpy(&payload_len, buf3 + 1, 2);
+            payload_len = ntohs(payload_len);
 
-            char json_buf[257] = {};
-            ret = recv(client_sock, json_buf, json_len, MSG_WAITALL);
-            if (ret != (int)json_len)
+            if (payload_len == 0 || payload_len > 1024)
+                continue;
+
+            uint8_t recv_payload[1024];
+            ret = recv(client_sock, (char*)recv_payload, payload_len, MSG_WAITALL);
+            if (ret != (int)payload_len)
                 break;
 
-            json_buf[json_len] = '\0';
-
-            // 简单 JSON 解析：提取 "type" 字段
-            std::string json_str(json_buf);
-            auto type_pos = json_str.find("\"type\":\"");
-            if (type_pos != std::string::npos)
+            // ---- 分发：新回调优先 ----
+            if (OnControlMessage)
             {
-                auto start = type_pos + 8;                      // 跳过 "type":"
-                auto end = json_str.find('"', start);
-                if (end != std::string::npos)
+                OnControlMessage(msg_type, recv_payload, payload_len);
+            }
+            else if (OnControlMessageLegacy)
+            {
+                // 兼容旧回调：提取 JSON type 字段
+                std::string json_str((char*)recv_payload, payload_len);
+                auto type_pos = json_str.find("\"type\":\"");
+                if (type_pos != std::string::npos)
                 {
-                    std::string msg_type = json_str.substr(start, end - start);
-                    qDebug() << "[InputServer] 收到控制消息:" << msg_type.c_str();
-
-                    if (OnControlMessage)
+                    auto start = type_pos + 8;
+                    auto end = json_str.find('"', start);
+                    if (end != std::string::npos)
                     {
-                        OnControlMessage(msg_type.c_str());
+                        std::string type_str = json_str.substr(start, end - start);
+                        qDebug() << "[InputServer] 收到控制消息(legacy):" << type_str.c_str();
+                        OnControlMessageLegacy(type_str.c_str());
                     }
                 }
             }
         }
         else
         {
-            // ---- 输入事件：回退 first_byte + 继续读剩余 11 字节 ----
+            // ---- 输入事件 ----
             InputMessage msg{};
             std::memcpy(&msg, &first_byte, 1);
 
@@ -375,21 +463,15 @@ void InputTransportServer::ReceiveLoop(SOCKET client_sock)
                 break;
 
             if (OnInputEvent)
-            {
                 OnInputEvent(msg);
-            }
         }
     }
 
     if (client_sock != INVALID_SOCKET)
-    {
         closesocket(client_sock);
-    }
 
     if (client_sock_ == client_sock)
-    {
         client_sock_ = INVALID_SOCKET;
-    }
 
     qDebug() << "[InputServer] 接收线程退出";
 }

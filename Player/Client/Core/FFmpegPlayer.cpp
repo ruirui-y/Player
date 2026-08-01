@@ -3,6 +3,8 @@
 #include "AudioRenderer.h"
 #include "StreamAudioRenderer.h"
 #include "Common/Input/InputTransport.h"
+#include "Common/Network/NetworkStats.h"
+#include "RttMeasurer.h"
 #include <QDebug>
 #include <chrono>
 #include <windows.h> 
@@ -328,22 +330,55 @@ void FFmpegPlayer::Stop()
     emit SigPlayState("stopped");
 }
 
-// ---- 设置 IDR 请求（连接 VideoReceiver 的丢包检测到控制信道） ----
-void FFmpegPlayer::SetupIdrRequest(InputTransportClient* input_transport)
+// ---- 设置控制信道绑定（IDR 请求 + RTT 测量 + 网络统计上报） ----
+void FFmpegPlayer::SetupStreamControl(InputTransportClient* input_transport)
 {
     if (!video_receiver_ || !input_transport)
         return;
 
-    // 用一个弱指针捕获，避免循环引用
-    // input_transport 由 StreamWindow 管理，生命周期长于回调
+    // ---- 1. 绑定 IDR 请求（Stage 5） ----
     InputTransportClient* transport = input_transport;
-
     video_receiver_->SetIdrRequestCallback([transport]()
     {
         transport->SendControlMessage("request_idr");
     });
 
-    qDebug() << "[FFmpegPlayer] IDR 请求机制已绑定";
+    // ---- 2. 启动 RTT 测量（Stage 6 新增） ----
+    rtt_measurer_ = new RttMeasurer();
+    rtt_measurer_->SetSendCallback([transport](uint64_t timestamp_ms)
+    {
+        transport->SendControlMessage(0x03, (const uint8_t*)&timestamp_ms, sizeof(timestamp_ms));
+    });
+    rtt_measurer_->Start();
+
+    // ---- 3. 绑定网络统计上报（Stage 6 新增） ----
+    // 每秒通过控制信道发送 loss_report 到服务端
+    RttMeasurer* rtt_ptr = rtt_measurer_;
+    video_receiver_->SetStatsCallback([transport, rtt_ptr](const NetworkStats& stats)
+    {
+        // 填充 RTT
+        NetworkStats st = stats;
+        st.rtt_ms = rtt_ptr->GetLatestRtt();
+
+        // 序列化为 JSON 并发送
+        std::string json = StatsToJson(st);
+        transport->SendControlMessage(0x02, (const uint8_t*)json.c_str(), (int)json.size());
+    });
+
+    // ---- 4. 接收服务端消息（Pong + BitrateChange） ----
+    input_transport->SetMessageHandler([rtt_ptr](uint8_t msg_type,
+        const uint8_t* payload, int payload_len)
+    {
+        if (msg_type == 0x04 && payload_len == 8)           // Pong
+        {
+            uint64_t timestamp;
+            std::memcpy(&timestamp, payload, 8);
+            rtt_ptr->OnPongReceived(timestamp);
+        }
+        // BitrateChange (0x05) 可以后续处理（显示在 UI 上等）
+    });
+
+    qDebug() << "[FFmpegPlayer] 控制信道已绑定（IDR + RTT + 统计上报）";
 }
 
 // ---- 关闭全部资源（只调用一次） ----
@@ -359,11 +394,17 @@ void FFmpegPlayer::Close()
     audio_renderer_->Close();
     stream_audio_renderer_->Close();
 
-    // 串流模式：释放 VideoReceiver + AudioReceiver
+    // 串流模式：释放 VideoReceiver + AudioReceiver + RttMeasurer
     if (video_receiver_)
     {
         delete video_receiver_;
         video_receiver_ = nullptr;
+    }
+    if (rtt_measurer_)
+    {
+        rtt_measurer_->Stop();
+        delete rtt_measurer_;
+        rtt_measurer_ = nullptr;
     }
     if (audio_receiver_)
     {

@@ -62,6 +62,8 @@ public:
 
     bool IsReady() const override { return codec_ctx_ != nullptr; }
 
+    bool SetBitrate(int bitrate_kbps) override;
+
 private:
     bool CreateStagingTexture();                                        // 创建 CPU 可读的 staging 纹理
     bool CreateSwsContext();                                            // 创建 BGRA→NV12 色彩转换上下文

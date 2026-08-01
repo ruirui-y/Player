@@ -39,6 +39,10 @@ public:
 
     // 是否就绪
     virtual bool IsReady() const = 0;                                                         // 是否就绪
+
+    // 运行时调整码率（kbps），返回 true 表示成功
+    // 无需重新初始化编码器，在下一帧 EncodeFrame 时自动生效
+    virtual bool SetBitrate(int bitrate_kbps) = 0;                                            // 运行时调码率
 };
 
 #endif // IVIDEOENCODER_H

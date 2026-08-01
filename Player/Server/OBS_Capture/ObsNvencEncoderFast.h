@@ -47,6 +47,8 @@ public:
 
     bool IsReady() const override { return codec_ctx_ != nullptr; }
 
+    bool SetBitrate(int bitrate_kbps) override;
+
 private:
     // 初始化 D3D11 视频处理器（用于硬件格式转换）
     bool InitVideoProcessor();

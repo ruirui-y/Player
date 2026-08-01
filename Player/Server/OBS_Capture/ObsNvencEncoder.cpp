@@ -515,3 +515,28 @@ void ObsNvencEncoder::Release()
     height_ = 0;
     nv12_linesize_ = 0;
 }
+
+// ---- 运行时调整码率 ----
+bool ObsNvencEncoder::SetBitrate(int bitrate_kbps)
+{
+    if (!codec_ctx_ || bitrate_kbps <= 0)
+        return false;
+
+    if (bitrate_kbps == bitrate_kbps_)
+        return true;
+
+    bitrate_kbps_ = bitrate_kbps;
+    codec_ctx_->bit_rate = static_cast<int64_t>(bitrate_kbps_) * 1000;
+
+    char bitrate_str[32];
+    snprintf(bitrate_str, sizeof(bitrate_str), "%dk", bitrate_kbps_);
+    int ret = av_opt_set(codec_ctx_->priv_data, "b", bitrate_str, 0);
+    if (ret < 0)
+    {
+        qDebug() << "[ObsNvencEncoder] SetBitrate av_opt_set 失败, ret=" << ret;
+        return false;
+    }
+
+    qDebug() << "[ObsNvencEncoder] 码率已调整为" << bitrate_kbps_ << "kbps";
+    return true;
+}

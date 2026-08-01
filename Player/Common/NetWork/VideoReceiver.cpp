@@ -134,6 +134,7 @@ void VideoReceiver::ReceiveLoop()
         }
 
         ++total_packets_;
+        total_bytes_ += recv_len;
 
         // ---- 第二步：交给组帧器 ----
         bool frame_complete = reassembler_.AddPacket(recv_buf, recv_len);
@@ -195,6 +196,44 @@ void VideoReceiver::ReceiveLoop()
             }
         }
         expected_frame_index_ = (current_frame + 1) & 0xFFFF;
+
+        // ---- 3.6：每秒网络统计上报 ----
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_stats_time_).count();
+        if (elapsed_ms >= 1000 && stats_callback_)
+        {
+            NetworkStats st;
+            st.receive_fps = static_cast<int>(total_frames_ - last_stats_frames_);
+            st.fec_recovered = reassembler_.GetFecRecoveredCount() - last_fec_recovered_;
+            st.fec_failed = reassembler_.GetFecFailCount() - last_fec_failed_;
+            st.lost_frames = total_lost_frames_;
+
+            // 丢包率：基于包序号缺口（粗略估算）
+            uint64_t pkts_received = total_packets_ - last_stats_packets_;
+            if (pkts_received > 0)
+            {
+                // 估算：收到 N 个数据包，预期应有 N * (1 + 1/5) 个包（含 FEC）
+                // 简化：直接用帧完整性统计
+                float total_frames_expected = static_cast<float>(total_frames_ + total_lost_frames_);
+                if (total_frames_expected > 0)
+                    st.loss_rate = static_cast<float>(total_lost_frames_) / total_frames_expected * 100.0f;
+            }
+
+            // 带宽估算：每秒字节数 × 8 / 1000
+            uint64_t bytes_delta = total_bytes_ - last_stats_bytes_;
+            st.estimated_bandwidth_kbps = static_cast<int>(bytes_delta * 8 / 1000);
+
+            stats_callback_(st);
+
+            // 重置基线
+            last_stats_time_ = now;
+            last_stats_packets_ = total_packets_;
+            last_stats_frames_ = total_frames_;
+            last_stats_bytes_ = total_bytes_;
+            last_fec_recovered_ = reassembler_.GetFecRecoveredCount();
+            last_fec_failed_ = reassembler_.GetFecFailCount();
+        }
 
         // ---- 第四步：包装成 AVPacket 推入队列 ----
         // av_new_packet 分配的 buffer 会自动释放，下游 av_packet_free 时回收

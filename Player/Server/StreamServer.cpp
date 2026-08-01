@@ -11,10 +11,12 @@
 
 #include "Common/NetWork/VideoSender.h"
 #include "Common/NetWork/AudioSender.h"
+#include "Common/NetWork/NetworkStats.h"
 #include "Common/Input/InputTransport.h"
 #include "Common/Input/InputInjector.h"
 #include "Common/Input/InputEvent.h"
 #include "Common/LogManager.h"
+#include "Server/BitrateController.h"
 #include "Server/OBS_Capture/MonitorCapture.h"
 #include "Server/OBS_Capture/IVideoEncoder.h"
 #include "Server/OBS_Capture/ObsNvencEncoder.h"
@@ -39,6 +41,7 @@ StreamServer::~StreamServer()
 
     // ---- 第三阶段：先停输入组件 ----
     if (input_server_)  { input_server_->Stop(); delete input_server_;  input_server_  = nullptr; }
+    if (bitrate_ctrl_)  { delete bitrate_ctrl_;  bitrate_ctrl_  = nullptr; }
     if (input_injector_) { delete input_injector_; input_injector_ = nullptr; }
 
     if (sender_)   { sender_->Close();  delete sender_;   sender_   = nullptr; }
@@ -137,6 +140,10 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
         return false;
     }
 
+    // ---- 第六阶段：初始化码率自适应控制器 ----
+    current_bitrate_ = bitrate_kbps;
+    bitrate_ctrl_ = new BitrateController(bitrate_kbps);
+
     // ---- 第六步：初始化 UDP 发送器 ----
     sender_ = new VideoSender();
     if (!sender_->Init(dest_ip, port))
@@ -193,13 +200,44 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
             input_injector_->Inject(msg);
     };
 
-    // 收到客户端控制消息（如 IDR 请求）
-    input_server_->OnControlMessage = [this](const char* msg_type)
+    // 收到客户端控制消息（新签名：type + payload）
+    input_server_->OnControlMessage = [this](uint8_t msg_type, const uint8_t* payload, int payload_len)
+    {
+        if (msg_type == 0x01)                               // RequestIDR
+        {
+            force_next_idr_.store(true);
+            LogManager::Log("INFO", "[StreamServer] 收到 IDR 请求，下一帧将编码为 IDR");
+        }
+        else if (msg_type == 0x02 && payload && payload_len > 0)  // LossReport
+        {
+            std::string json((const char*)payload, payload_len);
+            NetworkStats stats = JsonToStats(json);
+            if (bitrate_ctrl_)
+            {
+                int new_bitrate = bitrate_ctrl_->OnStatsReport(stats);
+                if (new_bitrate != current_bitrate_ && encoder_)
+                {
+                    if (encoder_->SetBitrate(new_bitrate))
+                    {
+                        current_bitrate_ = new_bitrate;
+                        LogManager::Log("INFO", "[StreamServer] 码率自适应: %d kbps", new_bitrate);
+                    }
+                }
+            }
+        }
+        else if (msg_type == 0x03 && payload_len == 8)      // Ping → Pong
+        {
+            input_server_->SendToClient(0x04, payload, payload_len);
+        }
+    };
+
+    // 兼容旧回调（字符串版，保留向后兼容）
+    input_server_->OnControlMessageLegacy = [this](const char* msg_type)
     {
         if (std::strcmp(msg_type, "request_idr") == 0)
         {
             force_next_idr_.store(true);
-            LogManager::Log("INFO", "[StreamServer] 收到 IDR 请求，下一帧将编码为 IDR");
+            LogManager::Log("INFO", "[StreamServer] 收到 IDR 请求(legacy)，下一帧将编码为 IDR");
         }
     };
 

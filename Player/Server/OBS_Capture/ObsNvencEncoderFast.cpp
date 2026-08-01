@@ -394,3 +394,29 @@ void ObsNvencEncoderFast::Release() {
     d3d_device_ = nullptr;
     codec_ctx_ = nullptr;
 }
+
+// ---- 运行时调整码率 ----
+bool ObsNvencEncoderFast::SetBitrate(int bitrate_kbps)
+{
+    if (!codec_ctx_ || bitrate_kbps <= 0)
+        return false;
+
+    if (bitrate_kbps == bitrate_kbps_)
+        return true;
+
+    bitrate_kbps_ = bitrate_kbps;
+    codec_ctx_->bit_rate = static_cast<int64_t>(bitrate_kbps_) * 1000;
+
+    // 通知 NVENC 新码率
+    char bitrate_str[32];
+    snprintf(bitrate_str, sizeof(bitrate_str), "%dk", bitrate_kbps_);
+    int ret = av_opt_set(codec_ctx_->priv_data, "b", bitrate_str, 0);
+    if (ret < 0)
+    {
+        qDebug() << "[FastEncoder] SetBitrate av_opt_set 失败, ret=" << ret;
+        return false;
+    }
+
+    qDebug() << "[FastEncoder] 码率已调整为" << bitrate_kbps_ << "kbps";
+    return true;
+}

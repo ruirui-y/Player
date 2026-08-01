@@ -16,6 +16,7 @@ class InputInjector;
 class WasapiCapture;
 class OpusAudioEncoder;
 class AudioSender;
+class BitrateController;
 
 // 服务器模式：桌面采集 → NVENC 编码 → UDP 发送
 // 第三阶段：TCP 控制信道接收输入事件 → SendInput 注入
@@ -81,6 +82,8 @@ private:
     std::atomic<bool> running_{false};                                                                  // 运行标志
     int consecutive_failures_{0};                                                                       // 连续采集失败计数
     std::atomic<bool> force_next_idr_{false};                                                           // 收到 IDR 请求后下一帧强制 IDR
+    BitrateController* bitrate_ctrl_{nullptr};                                                          // 码率自适应控制器
+    int current_bitrate_{0};                                                                            // 当前编码码率
 };
 
 #endif // STREAMSERVER_H

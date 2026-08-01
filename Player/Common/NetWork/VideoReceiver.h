@@ -11,6 +11,7 @@
 #include <WS2tcpip.h>
 
 #include "NalUnit.h"
+#include "NetworkStats.h"
 
 struct AVPacket;
 
@@ -51,6 +52,12 @@ public:
         idr_request_callback_ = std::move(callback);
     }
 
+    // 网络统计上报回调（客户端上层设置，每秒调用一次）
+    void SetStatsCallback(std::function<void(const NetworkStats&)> callback)
+    {
+        stats_callback_ = std::move(callback);
+    }
+
     // 丢包统计
     uint64_t TotalPackets() const { return total_packets_; }
     uint64_t TotalFrames() const { return total_frames_; }
@@ -86,6 +93,16 @@ private:
     // ---- IDR 请求 ----
     std::function<void()> idr_request_callback_;            // IDR 请求回调
     std::chrono::steady_clock::time_point last_idr_request_time_;  // 上次 IDR 请求时间
+
+    // ---- 网络统计上报 ----
+    std::function<void(const NetworkStats&)> stats_callback_;   // 统计上报回调
+    std::chrono::steady_clock::time_point last_stats_time_;     // 上次统计时间
+    uint64_t last_stats_packets_{0};                            // 上次统计时的包数
+    uint64_t last_stats_frames_{0};                             // 上次统计时的帧数
+    uint64_t last_stats_bytes_{0};                              // 上次统计时的字节数
+    int last_fec_recovered_{0};                                 // 上次统计时的 FEC 恢复数
+    int last_fec_failed_{0};                                    // 上次统计时的 FEC 失败数
+    uint64_t total_bytes_{0};                                   // 累计接收字节数
 };
 
 #endif // VIDEORECEIVER_H

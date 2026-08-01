@@ -120,6 +120,7 @@
   <ItemGroup>
     <ClCompile Include="Client\Core\AudioDecoder.cpp" />
     <ClCompile Include="Client\Core\AudioRenderer.cpp" />
+    <ClCompile Include="Client\Core\RttMeasurer.cpp" />
     <ClCompile Include="Client\Core\StreamAudioRenderer.cpp" />
     <ClCompile Include="Client\Core\FFmpegPlayer.cpp" />
     <ClCompile Include="Client\Core\D3D11Pipeline.cpp" />
@@ -137,6 +138,7 @@
     <ClCompile Include="Client\MainUI\MainWindow.cpp" />
     <ClCompile Include="Server\AudioCapture\WasapiCapture.cpp" />
     <ClCompile Include="Server\AudioCapture\OpusAudioEncoder.cpp" />
+    <ClCompile Include="Server\BitrateController.cpp" />
     <ClCompile Include="Server\OBS_Capture\ObsNvencEncoderFast.cpp" />
     <ClCompile Include="Server\OBS_Capture\CursorCapture.cpp" />
     <ClCompile Include="Server\OBS_Capture\DcCapture.cpp" />
@@ -166,7 +168,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Client\Core\AudioDecoder.h" />
+    <ClInclude Include="Client\Core\RttMeasurer.h" />
     <ClInclude Include="Common\ClockUtil.h" />
+    <ClInclude Include="Common\NetWork\NetworkStats.h" />
     <ClInclude Include="Common\SafeQueue.h" />
     <ClInclude Include="Common\NetWork\NalUnit.h" />
     <ClInclude Include="Common\NetWork\VideoSender.h" />
@@ -182,6 +186,7 @@
     <ClInclude Include="Client\Core\VideoDecoder.h" />
     <ClInclude Include="Server\AudioCapture\WasapiCapture.h" />
     <ClInclude Include="Server\AudioCapture\OpusAudioEncoder.h" />
+    <ClInclude Include="Server\BitrateController.h" />
     <ClInclude Include="Server\OBS_Capture\ObsNvencEncoderFast.h" />
     <ClInclude Include="Server\OBS_Capture\IVideoEncoder.h" />
     <ClInclude Include="Server\OBS_Capture\CaptureCommon.h" />
