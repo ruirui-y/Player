@@ -1,19 +1,16 @@
-#ifndef PLAYERAPP_H
+﻿#ifndef PLAYERAPP_H
 #define PLAYERAPP_H
 
 #include <QObject>
 #include <cstdint>
+#include <QString>
 
 class MainWindow;
-class StreamWindow;
 class FFmpegPlayer;
 
-// 应用程序控制器
-// 根据命令行参数决定启动模式：
-//   1. 文件播放器（默认）：创建 MainWindow + FFmpegPlayer
-//   2. 串流客户端：创建 StreamWindow + FFmpegPlayer
-//
-// main.cpp 只需要创建 PlayerApp 实例，调 Init()，然后 app.exec()
+// 应用控制器（第七阶段重构：只管理引擎，不碰 UI 堆栈）
+// Init() 创建 MainWindow，之后 UI 交互全部由 MainWindow 管理
+// PlayerApp 只对外提供 StartPlayer / StartStream / DestroyPlayer 引擎接口
 class PlayerApp : public QObject
 {
     Q_OBJECT
@@ -22,41 +19,36 @@ public:
     explicit PlayerApp(QObject* parent = nullptr);
     ~PlayerApp();
 
-    // 初始化：解析命令行参数，选择启动模式
-    bool Init(int argc, char* argv[]);
+    void Init();                                                // 创建 MainWindow → 显示
+
+    // ---- 引擎管理（由 MainWindow 页面调用） ----
+    void StartPlayer(const QString& path = QString());          // 播放器模式：创建 FFmpegPlayer + 绑定 PlayerPage
+    void StartStream(const QString& ip, uint16_t port,
+                     uint16_t ctrl_port, int fps);              // 控制端模式：创建 FFmpegPlayer + 启动串流
+    void DestroyPlayer();                                       // 销毁播放器引擎
+
+    // 控制端：输入转发启动（由 MainWindow 延迟触发）
+    void OnStreamReady(const QString& ip, uint16_t ctrl_port);
+    bool HasSenderIP() const;                               // 是否已收到服务端视频包
 
 private:
-    // ==== 通用 ====
-    void LoadStyle();                                           // 加载 style.qss
+    void LoadStyle();
 
-    // ==== 文件播放器模式 ====
-    void CreatePlayerUI();                                      // 创建 MainWindow
-    void CreatePlayer();                                        // 创建 FFmpegPlayer 并绑定到 MainWindow
-    void BindPlayerSignals();                                   // 绑定播放器控制信号
-    void StartProgressTimer();                                  // 启动进度轮询定时器
-    void UpdateProgress();                                      // 更新进度条 + 时间标签
-    void OpenFile(const QString& path);                         // 打开并播放文件
-    void OnFileSelected(const QString& path);                   // 文件浏览器选定文件
-    void OnSelectFile();                                        // 弹出文件选择对话框
-    void TestScreenCapture();                                   // 测试桌面捕获是否成功
+    // 播放器引擎绑定
+    void BindPlayerSignals();                                   // PlayerPage UI ↔ FFmpegPlayer
+    void BindStreamSignals();                                   // StreamWindow UI ↔ FFmpegPlayer
 
-    // ==== 串流客户端模式 ====
-    void CreateStreamUI();                                      // 创建 StreamWindow
-    void CreateStreamPlayer();                                  // 创建 FFmpegPlayer 并绑定到 StreamWindow
-    void BindStreamSignals();                                   // 绑定串流关闭信号
-    void OpenStream(uint16_t port, int fps);                              // 打开网络串流并自动播放
+    // 进度控制
+    void StartProgressTimer();
+    void UpdateProgress();
 
-private:
-    // ==== 当前模式的窗口（二选一） ====
-    MainWindow* main_window_{ nullptr };                        // 文件播放器窗口
-    StreamWindow* stream_window_{ nullptr };                    // 串流客户端窗口
+    MainWindow*   main_window_{nullptr};
+    FFmpegPlayer* player_{nullptr};
+    QTimer*       progress_timer_{nullptr};
 
-    // ==== 播放器引擎（两种模式共用） ====
-    FFmpegPlayer* player_{ nullptr };
-    QTimer* progress_timer_{ nullptr };                         // 进度轮询定时器（仅文件模式）
-
-    // ==== 串流模式参数 ====
-    bool is_streaming_{ false };                                // 是否串流模式
+    // 串流参数（OnStreamReady 时使用）
+    QString  stream_ip_;
+    uint16_t stream_ctrl_port_{0};
 };
 
 #endif // PLAYERAPP_H
