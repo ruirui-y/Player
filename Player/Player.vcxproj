@@ -225,6 +225,7 @@
     <None Include="Notes\MoonLight\基于OBS的屏幕捕获.md" />
     <None Include="Notes\MoonLight\桌面捕获.md" />
     <None Include="Notes\MoonLight\第二阶段笔记：UDP网络传输与客户端解码.md" />
+    <None Include="Notes\MoonLight\第四阶段笔记：音频串流实现.md" />
     <None Include="Notes\MoonLight\输入事件转发系统技术文档.md" />
     <None Include="Notes\从 CPU 到 GPU 的演进总结.md" />
     <None Include="Notes\基于ffplay的音视频同步改造.md" />

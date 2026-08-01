@@ -350,28 +350,28 @@ void WasapiCapture::CaptureLoop()
                 callback_count++;
 
                 // ---- 前 5 次回调逐次打印 ----
-                if (callback_count <= 5)
-                {
-                    bool all_zero = true;
-                    for (int i = 0; i < out_samples * (int)channels_ && i < 100; ++i)
-                    {
-                        if (pcm_buffer[i] != 0) { all_zero = false; break; }
-                    }
-                    if (!all_zero) non_zero_count++;
+                //if (callback_count <= 5)
+                //{
+                //    bool all_zero = true;
+                //    for (int i = 0; i < out_samples * (int)channels_ && i < 100; ++i)
+                //    {
+                //        if (pcm_buffer[i] != 0) { all_zero = false; break; }
+                //    }
+                //    if (!all_zero) non_zero_count++;
 
-                    LogManager::Log("INFO", "[WasapiCapture] 回调 #%llu: in_frames=%u, out_samples=%d, ts=%u, %s",
-                                    (unsigned long long)callback_count, num_frames, out_samples,
-                                    timestamp_ms, all_zero ? "全零" : "有数据");
-                }
+                //    LogManager::Log("INFO", "[WasapiCapture] 回调 #%llu: in_frames=%u, out_samples=%d, ts=%u, %s",
+                //                    (unsigned long long)callback_count, num_frames, out_samples,
+                //                    timestamp_ms, all_zero ? "全零" : "有数据");
+                //}
             }
 
             // ---- 每 500 次回调打印一次统计 ----
-            if (callback_count % 500 == 0 && callback_count > 0)
-            {
-                LogManager::Log("INFO", "[WasapiCapture] 统计: callback=%llu, total_frames=%llu, silent=%llu, non_zero=%llu",
-                                (unsigned long long)callback_count, (unsigned long long)total_frames,
-                                (unsigned long long)silent_count, (unsigned long long)non_zero_count);
-            }
+            //if (callback_count % 500 == 0 && callback_count > 0)
+            //{
+            //    LogManager::Log("INFO", "[WasapiCapture] 统计: callback=%llu, total_frames=%llu, silent=%llu, non_zero=%llu",
+            //                    (unsigned long long)callback_count, (unsigned long long)total_frames,
+            //                    (unsigned long long)silent_count, (unsigned long long)non_zero_count);
+            //}
 
             total_frames += num_frames;
 

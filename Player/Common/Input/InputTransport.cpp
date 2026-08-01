@@ -1,6 +1,8 @@
 ﻿#include "InputTransport.h"
 
 #include <WS2tcpip.h>
+#include <cstring>
+#include <string>
 #include <QDebug>
 
 #pragma comment(lib, "ws2_32.lib")
@@ -107,6 +109,29 @@ bool InputTransportClient::Send(const InputMessage& msg)
 
     int ret = send(sock_, (const char*)&msg, sizeof(InputMessage), 0);
     return ret == sizeof(InputMessage);
+}
+
+// 发送一条 JSON 控制消息（格式：0xFF + 2字节长度 + JSON）
+bool InputTransportClient::SendControlMessage(const char* msg_type)
+{
+    if (sock_ == INVALID_SOCKET)
+        return false;
+
+    // 构造 JSON：{ "type": "request_idr" }
+    char json[64];
+    int json_len = snprintf(json, sizeof(json), R"({"type":"%s"})", msg_type);
+    if (json_len <= 0 || json_len >= (int)sizeof(json))
+        return false;
+
+    // 包格式：1 字节标记 + 2 字节长度（大端）+ JSON
+    uint8_t buffer[128];
+    buffer[0] = CONTROL_MSG_MARKER;
+    uint16_t len_be = htons(static_cast<uint16_t>(json_len));
+    std::memcpy(buffer + 1, &len_be, 2);
+    std::memcpy(buffer + 3, json, json_len);
+
+    int ret = send(sock_, (const char*)buffer, 3 + json_len, 0);
+    return ret == 3 + json_len;
 }
 
 // ================================================================
@@ -289,30 +314,70 @@ void InputTransportServer::AcceptLoop()
 // 接收数据线程
 void InputTransportServer::ReceiveLoop(SOCKET client_sock)
 {
-    InputMessage msg{};
-
     while (running_)
     {
-        // ---- 阻塞接收一条 InputMessage（固定 12 字节） ----
-        int ret = recv(client_sock, (char*)&msg, sizeof(InputMessage), MSG_WAITALL);
+        // ---- 先读 1 字节，判断消息类型 ----
+        uint8_t first_byte;
+        int ret = recv(client_sock, (char*)&first_byte, 1, MSG_WAITALL);
 
         if (ret <= 0)
         {
-            // 连接断开或出错
             qDebug() << "[InputServer] 客户端断开，ret =" << ret;
             break;
         }
 
-        if (ret != sizeof(InputMessage))
+        if (first_byte == CONTROL_MSG_MARKER)
         {
-            // 不完整消息，丢弃
-            continue;
-        }
+            // ---- 控制消息：读 2 字节长度 + JSON 字符串 ----
+            uint16_t len_be;
+            ret = recv(client_sock, (char*)&len_be, 2, MSG_WAITALL);
+            if (ret != 2)
+                break;
 
-        // ---- 调用回调处理事件 ----
-        if (OnInputEvent)
+            uint16_t json_len = ntohs(len_be);
+            if (json_len == 0 || json_len > 256)
+                continue;                                       // 不合理的长度
+
+            char json_buf[257] = {};
+            ret = recv(client_sock, json_buf, json_len, MSG_WAITALL);
+            if (ret != (int)json_len)
+                break;
+
+            json_buf[json_len] = '\0';
+
+            // 简单 JSON 解析：提取 "type" 字段
+            std::string json_str(json_buf);
+            auto type_pos = json_str.find("\"type\":\"");
+            if (type_pos != std::string::npos)
+            {
+                auto start = type_pos + 8;                      // 跳过 "type":"
+                auto end = json_str.find('"', start);
+                if (end != std::string::npos)
+                {
+                    std::string msg_type = json_str.substr(start, end - start);
+                    qDebug() << "[InputServer] 收到控制消息:" << msg_type.c_str();
+
+                    if (OnControlMessage)
+                    {
+                        OnControlMessage(msg_type.c_str());
+                    }
+                }
+            }
+        }
+        else
         {
-            OnInputEvent(msg);
+            // ---- 输入事件：回退 first_byte + 继续读剩余 11 字节 ----
+            InputMessage msg{};
+            std::memcpy(&msg, &first_byte, 1);
+
+            ret = recv(client_sock, (char*)&msg + 1, sizeof(InputMessage) - 1, MSG_WAITALL);
+            if (ret != sizeof(InputMessage) - 1)
+                break;
+
+            if (OnInputEvent)
+            {
+                OnInputEvent(msg);
+            }
         }
     }
 

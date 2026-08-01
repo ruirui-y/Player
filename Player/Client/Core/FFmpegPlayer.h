@@ -16,6 +16,7 @@
 class VideoRenderer;        // 视频渲染层（前向声明）
 class AudioRenderer;        // 音频渲染层（前向声明，文件播放专用）
 class StreamAudioRenderer;  // 串流音频渲染层（前向声明，串流专用）
+class InputTransportClient; // 控制信道客户端（前向声明，IDR 请求用）
 
 struct AVPacket;
 struct AVFrame;
@@ -46,6 +47,9 @@ public:
 
     // 获取视频流发送方 IP（串流模式，收到第一个 UDP 包后才有值）
     std::string GetSenderIP() const;                                                    // 获取发送方 IP
+
+    // 设置 IDR 请求传输通道（串流模式，丢包时自动请求服务端发送 IDR 帧）
+    void SetupIdrRequest(InputTransportClient* input_transport);                       // 绑定 IDR 请求
 
     void SetVolume(double volume);                                                      // 0.0 ~ 1.0
     double GetVolume() const;

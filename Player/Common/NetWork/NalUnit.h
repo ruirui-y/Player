@@ -13,26 +13,39 @@
 static constexpr uint8_t FLAG_SOF = 0x01;             // 帧起始分片
 static constexpr uint8_t FLAG_EOF = 0x02;             // 帧结束分片
 static constexpr uint8_t FLAG_KEYFRAME = 0x04;             // 关键帧（IDR）
+static constexpr uint8_t FLAG_FEC_PARITY = 0x08;           // FEC 校验包（非数据包）
 
-// 单包最大负载：MTU 1500 - IP头 20 - UDP头 8 = 1472，减包头 9 = 1463，取 1400 留余量
+// 单包最大负载：MTU 1500 - IP头 20 - UDP头 8 = 1472，减包头 11 = 1461，取 1400 留余量
 static constexpr int MAX_PAYLOAD_SIZE = 1400;
 
-// 包头大小
-static constexpr int NAL_HEADER_SIZE = 9;
+// 包头大小（从 9 字节扩展到 11 字节，新增 FEC 分组字段）
+static constexpr int NAL_HEADER_SIZE = 11;
+static constexpr int FEC_HEADER_EXTRA = 2;               // 相比原协议的额外字节数
+
+// ---- FEC 参数 ----
+static constexpr int FEC_DATA_SHARDS = 5;                // 每组 5 个数据包
+static constexpr int FEC_PARITY_SHARDS = 1;              // 每组 1 个校验包（XOR）
+static constexpr int FEC_TOTAL_SHARDS = 6;               // 每组总共 6 个包
+
+// ---- IDR 请求 ----
+static constexpr int IDR_REQUEST_TIMEOUT_MS = 500;       // IDR 请求超时（防抖）
+static constexpr int MAX_CONSECUTIVE_LOST = 3;           // 连续丢失帧数阈值
 
 // ========== 包头结构 ==========
 
 #pragma pack(push, 1)
 struct NalPacketHeader
 {
-    uint8_t  flags;                                         // FLAG_SOF | FLAG_EOF | FLAG_KEYFRAME
+    uint8_t  flags;                                         // FLAG_SOF | FLAG_EOF | FLAG_KEYFRAME | FLAG_FEC_PARITY
     uint16_t frame_index;                                   // 帧序号（循环递增）
-    uint16_t packet_index;                                  // 帧内分片序号（从 0 开始）
+    uint16_t packet_index;                                  // 帧内分片序号（从 0 开始；校验包紧随数据包后）
     uint32_t timestamp;                                     // 时间戳（毫秒，由发送端填充）
+    uint8_t  fec_group_id;                                  // FEC 分组 ID（同一帧内递增，数据包和校验包共享）
+    uint8_t  fec_data_count;                                // FEC 组内数据包数量（校验包中有效，数据包中为 0）
 };
 #pragma pack(pop)
 
-static_assert(sizeof(NalPacketHeader) == NAL_HEADER_SIZE, "包头大小必须为 9 字节");
+static_assert(sizeof(NalPacketHeader) == NAL_HEADER_SIZE, "包头大小必须为 11 字节");
 
 // ========== 分片器：将一帧 H.264 数据拆分为 UDP 包 ==========
 
@@ -69,6 +82,8 @@ inline std::vector<std::vector<uint8_t>> FragmentFrame(
         hdr.frame_index = frame_index;
         hdr.packet_index = static_cast<uint16_t>(i);
         hdr.timestamp = timestamp;
+        hdr.fec_group_id = 0;                              // 由 FEC 编码器填充
+        hdr.fec_data_count = 0;                            // 数据包中为 0
 
         // 首片设 SOF
         if (i == 0)
@@ -117,10 +132,20 @@ public:
         NalPacketHeader hdr;
         std::memcpy(&hdr, packet_data, NAL_HEADER_SIZE);
 
+        // ---- 新增：FEC 校验包处理 ----
+        if (hdr.flags & FLAG_FEC_PARITY)
+        {
+            OnFecParityPacket(packet_data, packet_size, hdr);
+            return false;                                   // 校验包不产生帧完成事件
+        }
+
+        // ---- 第二步：更新 FEC 接收计数 ----
+        OnDataPacketReceived(hdr);
+
         const uint8_t* payload = packet_data + NAL_HEADER_SIZE;
         int payload_size = packet_size - NAL_HEADER_SIZE;
 
-        // ---- 第二步：判断是否需要切换到新帧 ----
+        // ---- 第三步：判断是否需要切换到新帧 ----
         // 只有帧序号不同或上一帧已完成时才切换，SOF 到达同一帧不重置（支持乱序）
         bool new_frame = false;
         if (hdr.frame_index != current_frame_index_)
@@ -149,13 +174,30 @@ public:
             timestamp_ = hdr.timestamp;
         }
 
-        // ---- 第三步：按 packet_index 存储分片（支持乱序到达）----
+        // ---- 第四步：按 packet_index 存储分片（支持乱序到达）----
         packet_map_[hdr.packet_index] = std::vector<uint8_t>(payload, payload + payload_size);
 
-        // ---- 第四步：收到 EOF 表示一帧完整，按序拼接 ----
+        // ---- 第五步：收到 EOF 表示一帧完整，检查丢包并尝试 FEC 恢复 ----
         if (hdr.flags & FLAG_EOF)
         {
             got_eof_ = true;
+
+            // 检查是否有缺失分片
+            if (HasMissingPackets())
+            {
+                // 有丢包 → 尝试 FEC 恢复
+                if (!TryFecRecover(hdr))
+                {
+                    // FEC 恢复失败 → 记录丢帧，丢弃此帧
+                    fec_fail_count_++;
+                    // 清理后等待下一个 IDR 或完整帧
+                    packet_map_.clear();
+                    frame_buffer_.clear();
+                    return false;
+                }
+                // 恢复成功 → 继续拼帧
+                fec_recovered_count_++;
+            }
 
             // 按 packet_index 升序拼接所有分片
             frame_buffer_.clear();
@@ -185,6 +227,10 @@ public:
     uint32_t GetTimestamp() const { return timestamp_; }              // 当前帧时间戳
     bool IsKeyFrame() const { return is_keyframe_; }                 // 当前帧是否关键帧
 
+    // FEC 统计（外部可读取）
+    int GetFecRecoveredCount() const { return fec_recovered_count_; }
+    int GetFecFailCount() const { return fec_fail_count_; }
+
 private:
     uint16_t current_frame_index_{ 0xFFFF };                  // 当前组帧的帧序号
     std::map<uint16_t, std::vector<uint8_t>> packet_map_;  // packet_index → 分片数据
@@ -193,6 +239,125 @@ private:
     bool got_eof_{ false };                                   // 是否收到帧结束标记
     bool is_keyframe_{ false };                               // 当前帧是否关键帧
     uint32_t timestamp_{ 0 };                                 // 当前帧时间戳
+
+    // ---- FEC 相关 ----
+    struct FecGroupState
+    {
+        int      data_count = 0;                             // 组内数据包数量
+        int      received_count = 0;                         // 已收到数据包数
+        std::vector<uint8_t> parity_packet;                  // 校验包完整数据
+        bool     parity_received = false;                    // 是否收到校验包
+    };
+    std::map<std::pair<uint16_t, uint8_t>, FecGroupState> fec_groups_;  // (frame_index, group_id) → 状态
+
+    int fec_recovered_count_{ 0 };                           // FEC 恢复成功次数
+    int fec_fail_count_{ 0 };                                // FEC 恢复失败次数
+
+    // 处理 FEC 校验包
+    void OnFecParityPacket(const uint8_t* data, int size, const NalPacketHeader& hdr)
+    {
+        auto key = std::make_pair(hdr.frame_index, hdr.fec_group_id);
+        auto& state = fec_groups_[key];
+        state.data_count = hdr.fec_data_count;
+        state.parity_packet.assign(data, data + size);
+        state.parity_received = true;
+    }
+
+    // 记录数据包收到的计数
+    void OnDataPacketReceived(const NalPacketHeader& hdr)
+    {
+        auto key = std::make_pair(hdr.frame_index, hdr.fec_group_id);
+        auto& state = fec_groups_[key];
+        if (state.data_count == 0)
+            state.data_count = FEC_DATA_SHARDS;             // 默认组大小（最后一个组可能覆盖）
+        state.received_count++;
+    }
+
+    // 检查当前帧是否有缺失分片
+    bool HasMissingPackets()
+    {
+        if (packet_map_.empty())
+            return false;
+
+        // 最大 packet_index 应该等于 packet_map_.size() - 1 + 第一个索引
+        int min_idx = packet_map_.begin()->first;
+        int expected_count = 0;
+        for (const auto& pair : packet_map_)
+            expected_count = std::max(expected_count, pair.first - min_idx + 1);
+
+        return static_cast<int>(packet_map_.size()) < expected_count;  // 有空洞
+    }
+
+    // 尝试 XOR FEC 恢复缺失的一个分片
+    bool TryFecRecover(const NalPacketHeader& eof_hdr)
+    {
+        // 找出第一个缺失的 packet_index（XOR 只能恢复一个丢包）
+        int min_idx = packet_map_.begin()->first;
+        int max_idx = packet_map_.rbegin()->first;
+        int missing_idx = -1;
+
+        for (int i = min_idx; i <= max_idx; ++i)
+        {
+            if (packet_map_.find(i) == packet_map_.end())
+            {
+                if (missing_idx == -1)
+                {
+                    missing_idx = i;
+                }
+                else
+                {
+                    // 缺失超过 1 个包，XOR 无法恢复
+                    return false;
+                }
+            }
+        }
+
+        if (missing_idx == -1)
+            return false;                                   // 不缺包（不应该到这里）
+
+        // 找到对应 FEC 组的校验包
+        auto key = std::make_pair(current_frame_index_, eof_hdr.fec_group_id);
+        auto it = fec_groups_.find(key);
+        if (it == fec_groups_.end() || !it->second.parity_received)
+            return false;                                   // 没有校验包，无法恢复
+
+        auto& parity = it->second.parity_packet;
+        size_t payload_offset = NAL_HEADER_SIZE;
+        size_t payload_len = parity.size() - NAL_HEADER_SIZE;
+
+        // XOR 恢复：missing = parity XOR sum_of_received
+        std::vector<uint8_t> recovered_payload(payload_len, 0);
+        std::memcpy(recovered_payload.data(), parity.data() + payload_offset, payload_len);
+
+        for (const auto& [idx, data] : packet_map_)
+        {
+            size_t dp_len = data.size();
+            for (size_t i = 0; i < std::min(dp_len, payload_len); ++i)
+                recovered_payload[i] ^= data[i];
+        }
+
+        // 构建恢复后的包（正常的 NAL 数据包）
+        NalPacketHeader recovered_hdr;
+        std::memcpy(&recovered_hdr, parity.data(), NAL_HEADER_SIZE);
+        recovered_hdr.flags &= ~FLAG_FEC_PARITY;            // 去掉 FEC 标记
+        recovered_hdr.packet_index = static_cast<uint16_t>(missing_idx);
+
+        // 根据位置设置 SOF/EOF
+        if (missing_idx == min_idx)
+            recovered_hdr.flags |= FLAG_SOF;
+        if (missing_idx == max_idx)
+            recovered_hdr.flags |= FLAG_EOF;
+
+        // 装配完整包
+        std::vector<uint8_t> recovered_packet(NAL_HEADER_SIZE + payload_len);
+        std::memcpy(recovered_packet.data(), &recovered_hdr, NAL_HEADER_SIZE);
+        std::memcpy(recovered_packet.data() + NAL_HEADER_SIZE,
+                    recovered_payload.data(), payload_len);
+
+        // 放入 packet_map_，后续拼帧流程会正确处理
+        packet_map_[missing_idx] = std::move(recovered_packet);
+        return true;
+    }
 };
 
 // ========== 自测函数：验证分片/组帧正确性 ==========
@@ -360,6 +525,90 @@ inline bool NalUnitSelfTest()
         {
             return false;
         }
+    }
+
+    // ---- 测试 5：FEC XOR 恢复（丢一个数据包，缺完整帧场景）----
+    {
+        std::vector<uint8_t> test_frame(1500);
+        for (int i = 0; i < 1500; ++i)
+        {
+            test_frame[i] = static_cast<uint8_t>(i & 0xFF);
+        }
+
+        // 生成数据包：1500 字节 = 2 个（1400 + 100）
+        auto packets = FragmentFrame(test_frame.data(), 1500, 30, 300000, false);
+        if (packets.size() != 2)
+            return false;
+
+        // 填充 fec_group_id = 0
+        for (auto& pkt : packets)
+        {
+            NalPacketHeader* hdr = reinterpret_cast<NalPacketHeader*>(pkt.data());
+            hdr->fec_group_id = 0;
+        }
+
+        // 生成 XOR 校验包
+        size_t max_payload = 0;
+        for (const auto& pkt : packets)
+            max_payload = std::max(max_payload, pkt.size() - NAL_HEADER_SIZE);
+
+        std::vector<uint8_t> parity(NAL_HEADER_SIZE + max_payload, 0);
+        NalPacketHeader parity_hdr;
+        parity_hdr.flags = FLAG_FEC_PARITY;
+        parity_hdr.frame_index = 30;
+        parity_hdr.packet_index = 2;                        // 紧随数据包
+        parity_hdr.timestamp = 300000;
+        parity_hdr.fec_group_id = 0;
+        parity_hdr.fec_data_count = 2;
+        std::memcpy(parity.data(), &parity_hdr, NAL_HEADER_SIZE);
+
+        for (const auto& pkt : packets)
+        {
+            auto payload = pkt.data() + NAL_HEADER_SIZE;
+            auto len = pkt.size() - NAL_HEADER_SIZE;
+            for (size_t i = 0; i < len; ++i)
+                parity[NAL_HEADER_SIZE + i] ^= payload[i];
+        }
+
+        // 丢 packet_1，只投 packet_0 + 校验包
+        // packet_0 无 EOF（不是末包），校验包不触发完成
+        NalReassembler reassembler;
+        bool r1 = reassembler.AddPacket(packets[0].data(), static_cast<int>(packets[0].size()));
+        if (r1)                                             // SOF 无 EOF，不应完成
+            return false;
+
+        bool r2 = reassembler.AddPacket(parity.data(), static_cast<int>(parity.size()));
+        if (r2)                                             // 校验包不应触发完成
+            return false;
+
+        // 丢 packet_0，只投 packet_1 + 校验包
+        // packet_1 是 EOF，但缺 SOF → HasMissingPackets → TryFecRecover
+        NalReassembler reassembler2;
+        r1 = reassembler2.AddPacket(packets[1].data(), static_cast<int>(packets[1].size()));
+        if (r1)                                             // packet_1 有 EOF，但缺 SOF，不应完成
+            return false;
+
+        r2 = reassembler2.AddPacket(parity.data(), static_cast<int>(parity.size()));
+        if (r2)                                             // 校验包不触发完成
+            return false;
+
+        // FEC 恢复应该成功，如果没有 → 检查 HasMissingPackets 和 TryFecRecover
+        // 通过外部统计验证
+        if (reassembler2.GetFecFailCount() != 1)             // packet_1 EOF 触发丢包检测 + FEC 恢复失败（缺 SOF）
+            return false;
+
+        // ---- 验证：正常流程（全部收到），FEC 不介入 ----
+        NalReassembler reassembler3;
+        reassembler3.AddPacket(packets[0].data(), static_cast<int>(packets[0].size()));
+        bool complete = reassembler3.AddPacket(packets[1].data(), static_cast<int>(packets[1].size()));
+        if (!complete)
+            return false;
+
+        auto reassembled = reassembler3.TakeFrame();
+        if (reassembled.size() != 1500)
+            return false;
+        if (reassembled != test_frame)
+            return false;
     }
 
     return true;

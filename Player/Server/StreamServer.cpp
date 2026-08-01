@@ -6,6 +6,7 @@
 #include <chrono>
 #include <thread>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 #include "Common/NetWork/VideoSender.h"
@@ -192,6 +193,16 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
             input_injector_->Inject(msg);
     };
 
+    // 收到客户端控制消息（如 IDR 请求）
+    input_server_->OnControlMessage = [this](const char* msg_type)
+    {
+        if (std::strcmp(msg_type, "request_idr") == 0)
+        {
+            force_next_idr_.store(true);
+            LogManager::Log("INFO", "[StreamServer] 收到 IDR 请求，下一帧将编码为 IDR");
+        }
+    };
+
     input_server_->Start();
     LogManager::Log("INFO", "[StreamServer] 输入控制信道已启动 (port %d)", ctrl_port);
 
@@ -310,17 +321,19 @@ void StreamServer::Run()
         }
 
         // ---- 第三步：编码 + 发送 ----
+        // 首帧或收到 IDR 请求时强制编 IDR
+        bool force_idr = (frame_index == 0) || force_next_idr_.exchange(false);
         std::vector<uint8_t> h264_data;
         uint32_t timestamp = static_cast<uint32_t>(frame_index * (1000 / fps_));
 
-        if (encoder_->EncodeFrame(tex, frame_index, (frame_index == 0), h264_data,
+        if (encoder_->EncodeFrame(tex, frame_index, force_idr, h264_data,
                                   nullptr,
                                   capture_->MonitorX(), capture_->MonitorY())
             && !h264_data.empty())
         {
             sender_->SendFrame(h264_data.data(), (int)h264_data.size(),
                                (uint16_t)(frame_index & 0xFFFF),
-                               timestamp, (frame_index == 0));
+                               timestamp, force_idr);
         }
 
         ++frame_index;

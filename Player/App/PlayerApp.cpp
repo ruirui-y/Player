@@ -113,6 +113,10 @@ bool PlayerApp::Init(int argc, char* argv[])
                         input_timer->stop();
                         input_timer->deleteLater();
                         stream_window_->StartInput(sender_ip.c_str(), ctrl_port);
+
+                        // ---- 第五阶段：绑定 IDR 请求机制 ----
+                        // VideoReceiver 检测丢包时，通过控制信道向服务端请求 IDR 帧
+                        player_->SetupIdrRequest(stream_window_->GetInputTransport());
                     }
                 });
             input_timer->start(500);   // 每 500ms 检查一次，直到收到视频流

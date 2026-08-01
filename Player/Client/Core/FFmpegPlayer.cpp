@@ -2,6 +2,7 @@
 #include "VideoRenderer.h"
 #include "AudioRenderer.h"
 #include "StreamAudioRenderer.h"
+#include "Common/Input/InputTransport.h"
 #include <QDebug>
 #include <chrono>
 #include <windows.h> 
@@ -325,6 +326,24 @@ void FFmpegPlayer::Stop()
     }
     current_pts_ms_ = 0;
     emit SigPlayState("stopped");
+}
+
+// ---- 设置 IDR 请求（连接 VideoReceiver 的丢包检测到控制信道） ----
+void FFmpegPlayer::SetupIdrRequest(InputTransportClient* input_transport)
+{
+    if (!video_receiver_ || !input_transport)
+        return;
+
+    // 用一个弱指针捕获，避免循环引用
+    // input_transport 由 StreamWindow 管理，生命周期长于回调
+    InputTransportClient* transport = input_transport;
+
+    video_receiver_->SetIdrRequestCallback([transport]()
+    {
+        transport->SendControlMessage("request_idr");
+    });
+
+    qDebug() << "[FFmpegPlayer] IDR 请求机制已绑定";
 }
 
 // ---- 关闭全部资源（只调用一次） ----

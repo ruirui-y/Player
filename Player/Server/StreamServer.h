@@ -80,6 +80,7 @@ private:
 
     std::atomic<bool> running_{false};                                                                  // 运行标志
     int consecutive_failures_{0};                                                                       // 连续采集失败计数
+    std::atomic<bool> force_next_idr_{false};                                                           // 收到 IDR 请求后下一帧强制 IDR
 };
 
 #endif // STREAMSERVER_H

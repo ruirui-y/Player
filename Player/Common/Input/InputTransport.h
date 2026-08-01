@@ -8,7 +8,7 @@
 #include <WinSock2.h>
 #include "InputEvent.h"
 
-// ========== 客户端：TCP 连接 + 发送输入事件 ==========
+// ========== 客户端：TCP 连接 + 发送输入事件 + 控制消息 ==========
 
 class InputTransportClient
 {
@@ -27,6 +27,10 @@ public:
     // 发送一条输入消息（非阻塞，失败返回 false）
     bool Send(const InputMessage& msg);                                                     // 发送
 
+    // 发送一条 JSON 控制消息（如 IDR 请求等）
+    // msg_type：消息类型标识，如 "request_idr"
+    bool SendControlMessage(const char* msg_type);                                          // 发送控制消息
+
     bool IsConnected() const { return sock_ != INVALID_SOCKET; }                            // 是否已连接
 
     // 获取服务端发送的显示器信息（Connect 成功后调用）
@@ -37,6 +41,11 @@ private:
     bool wsa_started_{false};                                                               // WSA 是否已启动
     ServerMonitorInfo monitor_info_{};                                                      // 服务端显示器信息
 };
+
+// 控制消息类型（TCP 信道上用的 JSON 消息）
+// 格式：1 字节标记 0xFF + 2 字节 JSON 长度 + JSON 字符串
+// 服务端收到 0xFF 开头的数据时，后续数据按控制消息解析，不走 InputMessage 路径
+static constexpr uint8_t CONTROL_MSG_MARKER = 0xFF;                                        // 控制消息标记
 
 // ========== 服务端：TCP 监听 + 接收输入事件 ==========
 
@@ -58,6 +67,10 @@ public:
 
     // 收到输入事件时的回调（在接收线程中调用）
     std::function<void(const InputMessage&)> OnInputEvent;                                  // 事件回调
+
+    // 收到控制消息时的回调（在接收线程中调用，传入 JSON 字符串）
+    // 如收到 { "type": "request_idr" } 时，传入 "request_idr"
+    std::function<void(const char* msg_type)> OnControlMessage;                             // 控制消息回调
 
 private:
     void AcceptLoop();                                                                      // 接受连接线程

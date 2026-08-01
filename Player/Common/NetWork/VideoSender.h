@@ -25,7 +25,7 @@ public:
 
     void Close();                                           // 关闭 socket
 
-    // 发送一帧 H.264 数据
+    // 发送一帧 H.264 数据（内部分片 + FEC 编码后逐包发送）
     // frame_data：H.264 Annex B 数据
     // frame_size：数据大小
     // frame_index：帧序号
@@ -33,7 +33,7 @@ public:
     // is_keyframe：是否关键帧
     void SendFrame(const uint8_t* frame_data, int frame_size,
                    uint16_t frame_index, uint32_t timestamp,
-                   bool is_keyframe);                       // 分片并发送
+                   bool is_keyframe);                       // 分片 + FEC + 发送
 
     bool IsReady() const { return sock_ != INVALID_SOCKET; }   // 是否就绪
 

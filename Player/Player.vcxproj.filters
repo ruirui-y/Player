@@ -139,6 +139,18 @@
     <ClCompile Include="Common\LogManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Server\AudioCapture\WasapiCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\AudioCapture\OpusAudioEncoder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\NetWork\AudioSender.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\NetWork\AudioReceiver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="Common\TcpServer.h">
@@ -266,6 +278,18 @@
     <ClInclude Include="Client\Core\Nv12GpuUploader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Common\NetWork\AudioSender.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\NetWork\AudioReceiver.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Server\AudioCapture\WasapiCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Server\AudioCapture\OpusAudioEncoder.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="Notes\8k30帧.md" />
@@ -288,5 +312,6 @@
     <None Include="Notes\用户交互.md" />
     <None Include="Notes\MoonLight\第二阶段笔记：UDP网络传输与客户端解码.md" />
     <None Include="Notes\MoonLight\输入事件转发系统技术文档.md" />
+    <None Include="Notes\MoonLight\第四阶段笔记：音频串流实现.md" />
   </ItemGroup>
 </Project>

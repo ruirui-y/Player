@@ -37,6 +37,9 @@ public:
     bool StartInput(const char* server_ip, uint16_t ctrl_port);             // 启动输入转发
     void StopInput();                                                       // 停止输入转发
 
+    // 获取控制信道客户端（IDR 请求等扩展功能用）
+    InputTransportClient* GetInputTransport() const { return input_transport_; }
+
 signals:
     void SigRequestClose();                                                 // 请求关闭
 

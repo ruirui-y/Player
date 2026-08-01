@@ -101,7 +101,8 @@ void VideoReceiver::Stop()
         recv_thread_.join();
 
     qDebug() << "[VideoReceiver] 已停止，共收到" << total_packets_ << "个包，"
-             << total_frames_ << "帧";
+             << total_frames_ << "帧, 丢" << total_lost_frames_ << "帧"
+             << ", FEC恢复" << fec_recovered_frames_ << "帧";
 }
 
 // 接收线程主循环
@@ -145,6 +146,55 @@ void VideoReceiver::ReceiveLoop()
             continue;
 
         ++total_frames_;
+
+        // ---- 3.5：丢包检测与 IDR 请求 ----
+        uint16_t current_frame = reassembler_.GetFrameIndex();
+
+        // 同步 FEC 恢复统计（NalReassembler 内部累计）
+        fec_recovered_frames_ = reassembler_.GetFecRecoveredCount();
+
+        if (expected_frame_index_ != 0)
+        {
+            // 检查帧序号连续性
+            uint16_t diff = (current_frame - expected_frame_index_) & 0xFFFF;
+            if (diff != 0)
+            {
+                // 跳帧 = 丢帧（diff=0 正常，diff>0 有丢帧）
+                int skipped = static_cast<int>(diff);
+                total_lost_frames_ += skipped;
+                consecutive_lost_frames_ += skipped;
+
+                LogManager::Log("WARN", "[VideoReceiver] 丢帧检测: 期望 %d, 实际 %d, 跳过 %d 帧, 连续丢 %d, FEC恢复 %d",
+                                expected_frame_index_, current_frame, skipped, consecutive_lost_frames_,
+                                fec_recovered_frames_);
+
+                // 连续丢帧超过阈值 → 请求 IDR
+                if (consecutive_lost_frames_ >= MAX_CONSECUTIVE_LOST)
+                {
+                    auto now = std::chrono::steady_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - last_idr_request_time_).count();
+
+                    if (elapsed >= IDR_REQUEST_TIMEOUT_MS)
+                    {
+                        LogManager::Log("WARN", "[VideoReceiver] 连续丢 %d 帧，请求 IDR",
+                                        consecutive_lost_frames_);
+                        if (idr_request_callback_)
+                        {
+                            idr_request_callback_();
+                        }
+                        last_idr_request_time_ = now;
+                        consecutive_lost_frames_ = 0;           // 重置，等 IDR 到达
+                    }
+                }
+            }
+            else
+            {
+                // 正常连续帧
+                consecutive_lost_frames_ = 0;
+            }
+        }
+        expected_frame_index_ = (current_frame + 1) & 0xFFFF;
 
         // ---- 第四步：包装成 AVPacket 推入队列 ----
         // av_new_packet 分配的 buffer 会自动释放，下游 av_packet_free 时回收
