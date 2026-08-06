@@ -1,0 +1,136 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DemandStation 实时指标</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- 顶部标题 -->
+    <header>
+        <h1>📊 DemandStation 实时指标</h1>
+        <span id="updateTime">等待加载...</span>
+    </header>
+
+    <!-- 统计卡片 -->
+    <section class="cards" id="statCards">
+        <div class="card">
+            <div class="card-label">创建订单</div>
+            <div class="card-value" id="createOrderTotal">0</div>
+        </div>
+        <div class="card">
+            <div class="card-label">支付成功</div>
+            <div class="card-value" id="paySuccessTotal">0</div>
+        </div>
+        <div class="card">
+            <div class="card-label">支付失败</div>
+            <div class="card-value" id="payFailedTotal">0</div>
+        </div>
+        <div class="card">
+            <div class="card-label">平均耗时</div>
+            <div class="card-value" id="avgMs">0ms</div>
+        </div>
+    </section>
+
+    <!-- QPS 折线图 -->
+    <section class="chart-section">
+        <h2>QPS 趋势（最近 2 分钟）</h2>
+        <canvas id="qpsChart" width="800" height="250"></canvas>
+    </section>
+
+    <!-- 响应时间分布 -->
+    <section class="chart-section">
+        <h2>响应时间分布（毫秒）</h2>
+        <div class="bar-chart" id="barChart"></div>
+    </section>
+
+    <!-- 详细计数器表 -->
+    <section class="detail-section">
+        <h2>全部指标</h2>
+        <table id="metricTable">
+            <thead>
+                <tr>
+                    <th>名称</th>
+                    <th>说明</th>
+                    <th>值</th>
+                </tr>
+            </thead>
+            <tbody id="metricBody">
+                <tr><td colspan="3">等待数据...</td></tr>
+            </tbody>
+        </table>
+    </section>
+
+    <script src="app.js"></script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DemandStation 实时指标</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- 顶部标题 -->
+    <header>
+        <h1>📊 DemandStation 实时指标</h1>
+        <span id="updateTime">等待加载...</span>
+    </header>
+
+    <!-- 统计卡片 -->
+    <section class="cards" id="statCards">
+        <div class="card">
+            <div class="card-label">创建订单</div>
+            <div class="card-value" id="createOrderTotal">0</div>
+        </div>
+        <div class="card">
+            <div class="card-label">支付成功</div>
+            <div class="card-value" id="paySuccessTotal">0</div>
+        </div>
+        <div class="card">
+            <div class="card-label">支付失败</div>
+            <div class="card-value" id="payFailedTotal">0</div>
+        </div>
+        <div class="card">
+            <div class="card-label">平均耗时</div>
+            <div class="card-value" id="avgMs">0ms</div>
+        </div>
+    </section>
+
+    <!-- QPS 折线图 -->
+    <section class="chart-section">
+        <h2>QPS 趋势（最近 2 分钟）</h2>
+        <canvas id="qpsChart" width="800" height="250"></canvas>
+    </section>
+
+    <!-- 响应时间分布 -->
+    <section class="chart-section">
+        <h2>响应时间分布（毫秒）</h2>
+        <div class="bar-chart" id="barChart"></div>
+    </section>
+
+    <!-- 详细计数器表 -->
+    <section class="detail-section">
+        <h2>全部指标</h2>
+        <table id="metricTable">
+            <thead>
+                <tr>
+                    <th>名称</th>
+                    <th>说明</th>
+                    <th>值</th>
+                </tr>
+            </thead>
+            <tbody id="metricBody">
+                <tr><td colspan="3">等待数据...</td></tr>
+            </tbody>
+        </table>
+    </section>
+
+    <script src="app.js"></script>
+</body>
+</html>

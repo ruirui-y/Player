@@ -1,0 +1,251 @@
+﻿syntax = "proto3";
+
+import "common.proto";
+
+package ServerApi;
+
+// =========================================================================================
+// 1. 登录与心跳保活业务
+// =========================================================================================
+message LoginReq {
+    string username = 1;                                                        // 厂家后台分配的账号
+    string password = 2;                                                        // 登录密码 (建议客户端做个MD5后再传)
+}
+
+message LoginRsp {
+    int64  server_time        = 1;                                              // 服务器同步时间戳
+}
+
+message Heartbeat {
+    int64 timestamp = 1;                                                        // 客户端当前时间戳
+}
+
+// =========================================================================================
+// 2. 🥽 VR 设备管理业务
+// =========================================================================================
+
+// ---------------------------------------------------------
+// 添加设备 (对应 MsgId: 1009 / 1010)
+// ---------------------------------------------------------
+message AddUserVrDeviceReq {
+    string device_id   = 2;                                                     // 设备唯一标识符 (对应旧版: sendObj["device_id"])
+    string device_nick = 3;                                                     // 设备昵称 (对应旧版: sendObj["device_nick"])
+}
+
+message AddUserVrDeviceRsp {
+    string device_id   = 1;                                                     // 成功添加的设备ID
+    string device_nick = 2;                                                     // 成功添加的设备昵称 (原样返回给客户端更新UI)
+}
+
+// ---------------------------------------------------------
+// 删除设备 (对应 MsgId: 1011 / 1012)
+// ---------------------------------------------------------
+message DelUserVrDeviceReq {
+    string device_id = 2;                                                       // 要删除的设备唯一标识符
+}
+
+message DelUserVrDeviceRsp {
+    string device_id = 1;                                                       // 成功删除的设备ID (客户端依据此ID清理本地缓存)
+}
+
+// ---------------------------------------------------------
+// 更新设备昵称 (对应 MsgId: 1015 / 1016)
+// ---------------------------------------------------------
+message UpdateDeviceNickReq {
+    string device_id   = 2;                                                     // 要修改的设备标识符
+    string device_nick = 3;                                                     // 新的设备昵称
+}
+
+message UpdateDeviceNickRsp {
+    string device_id   = 1;                                                     // 被修改的设备ID
+    string device_nick = 2;                                                     // 新的设备昵称确认
+}
+
+// ---------------------------------------------------------
+// 更新设备分组 (对应 MsgId: 1017 / 1018)
+// ---------------------------------------------------------
+message UpdateDeviceTeamReq {
+    string device_id = 1;                                                       // 要修改的设备标识符
+    string team_name = 2;                                                       // 新的分组名称
+}
+
+message UpdateDeviceTeamRsp {
+    string device_id = 1;                                                       // 被修改的设备ID
+    string team_name = 2;                                                       // 新的分组名称确认
+}
+
+// ---------------------------------------------------------
+// 更新设备可玩时段 (对应 MsgId: 1019 / 1020)
+// ---------------------------------------------------------
+message UpdateDevicePlayTimeReq {
+    string device_id = 1;                                                       // 要修改的设备标识符
+    string play_time = 2;                                                       // 新的可玩时段 (如 "09:00-18:00")
+}
+
+message UpdateDevicePlayTimeRsp {
+    string device_id = 1;                                                       // 被修改的设备ID
+    string play_time = 2;                                                       // 新的可玩时段确认
+}
+
+// ---------------------------------------------------------
+// 获取设备列表 (对应 MsgId: 1017 / 1018)
+// ---------------------------------------------------------
+message VrDeviceSummary {
+    string device_id   = 1;                                                     // 设备唯一ID
+    string device_nick = 2;                                                     // 设备昵称
+    string team_name   = 3;                                                     // 队伍名称
+    string play_time   = 4;                                                     // 游玩时间
+}
+
+message GetVrDeviceListReq {
+}
+
+message GetVrDeviceListRsp {
+    repeated VrDeviceSummary devices = 1;                                       // 设备列表集合
+}
+
+// =========================================================================================
+// 3. 💰 支付与商业化业务 (积分、充值、消费)
+// =========================================================================================
+
+// 获取钱包余额
+message GetWalletReq {}
+message GetWalletRsp {
+    int64 current_points = 1;                                                   // 当前可用积分
+    int64 total_recharged = 2;                                                  // 累计充值积分 (可用于展示VIP等级)
+}
+
+// 充值套餐商品结构
+message GoodsInfo {
+    uint64 goods_id      = 1;                                                   // 商品ID
+    string goods_name    = 2;                                                   // 套餐名称 (如: "新春特惠包")
+    uint32 price_cents   = 3;                                                   // 人民币价格 (单位：分，如 1000 代表 10.00 元)
+    uint32 points_reward = 4;                                                   // 充值后给予的积分数量
+}
+
+// 拉取充值套餐
+message GetGoodsReq {}
+message GetGoodsRsp {
+    repeated GoodsInfo goods_list = 1;                                          // 供 UI 渲染充值面板
+}
+
+// ---------------------------------------------------------
+// 👑 发起支付核心流程
+// ---------------------------------------------------------
+// 客户端 -> 服务端：买套餐 (goods_id>0) 或自定义充值 (goods_id=0 + custom_amount_cents)
+message CreateOrderReq {
+    uint64 goods_id             = 1;                                            // 商品ID (0 表示自定义充值)
+    uint32 custom_amount_cents  = 2;                                            // 自定义金额(分)，仅 goods_id==0 时有效
+}
+
+
+// 服务端 -> 客户端：订单创建成功，请扫码
+message CreateOrderRsp {
+    string order_id     = 1;                                                    // 系统内部生成的订单号 (如: "PAY202605150001")
+    string qr_code_url  = 2;                                                    // 核心：微信/支付宝返回的 URL，客户端用 QREncode 生成二维码图片展示在界面上！
+    uint32 expire_time  = 3;                                                    // 二维码过期倒计时(秒)
+}
+
+// 👑 服务端 -> 客户端：(异步推送) 微信回调说客户付钱了！
+// 注意：这个没有 Req，是服务器收到微信的回调后，通过 TCP 直接发给对应客户端的！
+message OrderNotifyPush {
+    string order_id       = 1;          
+    bool   is_success     = 2;                                                  // 是否支付成功
+    int64  current_points = 3;                                                  // 最新积分余额 (客户端收到后直接更新 UI)
+}
+
+// ---------------------------------------------------------
+// 消费积分 (看电影/启动游戏)
+// ---------------------------------------------------------
+message ConsumePointsReq {
+    string item_game              = 1;                                          // 商品名称
+    ConsumeType match_type        = 2;                                          // 1:电影, 2:游戏
+    int32  points_to_consume      = 3;                                          // 本次需要扣除的积分数（游戏时使用）
+}
+
+message ConsumePointsRsp {
+    int64 points_cost    = 1;                                                   // 本次消费扣除了多少积分
+    int64 current_points = 2;                                                   // 剩余多少积分
+}
+
+// ---------------------------------------------------------
+// 获取资金流水记录
+// ---------------------------------------------------------
+
+// 单条资金流水记录
+message PointFlowRecord {
+    string create_time   = 1;                                                   // 流水发生时间 (如 "2026-05-15 14:00:00")
+    int32  flow_type     = 2;                                                   // 流水类型: 1=充值收入, 2=看电影支出, 3=玩游戏支出, 4=系统赠送
+    int32  points_change = 3;                                                   // 变动额度 (正数代表增加，负数代表扣除)
+    int64  balance_after = 4;                                                   // 变动后的最终余额
+    string associated_id = 5;                                                   // 关联的订单号或业务ID
+}
+
+message GetFlowReq {
+    uint32 page_index = 1;                                                      // 分页页码 (默认 1)
+    uint32 page_size  = 2;                                                      // 每页条数 (默认 100)
+}
+
+message GetFlowRsp {
+    repeated PointFlowRecord records = 1;                                       // 资金流水数组
+    uint32 total_count               = 2;                                       // 流水总条数 (可用于后续分页)
+}
+
+// =========================================================================================
+// 4. 🎮 游戏服务业务 (用户游戏信息 / 版本更新)
+// =========================================================================================
+
+// ---------------------------------------------------------
+// 获取用户游戏信息 (对应 MsgId: 1101 / 1102)
+// 查询 t_user_game_rel 表，返回该用户拥有的所有游戏及设备数量
+// ---------------------------------------------------------
+message GetGameInfoReq {
+}
+
+message GameInfo {
+    string game_name   = 1;                                                     // 游戏名称 (PVP / MiniWorld)
+    int32  device_count = 2;                                                    // 该游戏授权的最大设备数量
+    int32  points_per_session = 3;                                              // 每次启动游戏消耗的积分数
+}
+
+message GetGameInfoRsp {
+    repeated GameInfo games = 1;                                                // 用户拥有的游戏列表
+}
+
+// =========================================================================================
+// 5. 📦 客户端自更新业务 (版本检查 + exe 分片下载)
+// =========================================================================================
+
+// ---------------------------------------------------------
+// 检查客户端版本 (对应 MsgId: 1201 / 1202)
+// 客户端发送当前版本号，服务端对比 t_client_version 表
+// ---------------------------------------------------------
+message ClientVersionReq {
+    string current_version = 1;                                                   // 当前客户端版本号，如 "1.0.0"
+    int32  current_version_code = 2;                                              // 当前版本序号，用于数值比较
+}
+
+message ClientVersionRsp {
+    bool   has_update = 1;                                                        // 是否有更新
+    bool   force_update = 2;                                                      // 是否强制更新（不更新不能继续使用）
+    string new_version = 3;                                                       // 新版本号
+    int32  new_version_code = 4;                                                  // 新版本序号
+    string file_md5 = 5;                                                          // exe 文件 MD5，用于下载后校验
+    int64  file_size = 6;                                                         // exe 文件总大小（字节）
+    string release_notes = 7;                                                     // 更新日志
+}
+
+// ---------------------------------------------------------
+// exe 分片下载 (对应 MsgId: 1203 / 1204)
+// 客户端逐片请求，服务端从磁盘读取 exe 并返回二进制数据
+// ---------------------------------------------------------
+message DownloadExeChunkReq {
+    uint32 chunk_index = 1;                                                       // 请求的切片序号 (0, 1, 2...)
+}
+
+message DownloadExeChunkRsp {
+    uint32 chunk_index = 1;                                                       // 当前切片序号
+    bytes  chunk_data = 2;                                                        // exe 分片二进制数据
+    bool   is_last = 3;                                                           // 是否为最后一块
+    string file_md5 = 4;                                                          // 整个 exe 的 MD5（客户端最后校验用）
+}

@@ -1,0 +1,133 @@
+﻿syntax = "proto3";
+
+package ServerApi;
+
+// =========================================================================================
+// 协议格式: [TotalLen (4字节)] + [HeaderLen (2字节)] + [PacketHeader 字节流] + [Body 字节流]
+// =========================================================================================
+
+// =========================================================================================
+// 1. 全局路由枚举 (MsgId)
+// =========================================================================================
+enum MsgId {
+    ID_UNKNOWN                    = 0;                                                      // 未知消息ID
+
+    // ---------------- 心跳与登录 (1000 - 1999) ----------------
+    ID_HEARTBEAT                  = 1;                                                      // 心跳包
+    ID_LOGIN_REQ                  = 1001;                                                   // 登录请求
+    ID_LOGIN_RSP                  = 1002;                                                   // 登录响应
+
+    // ---------------- 🥽 VR设备管理 (1009 - 1099) ----------------
+    ID_ADD_USER_VR_DEVICE_REQ     = 1009;                                                   // 添加用户VR设备请求
+    ID_ADD_USER_VR_DEVICE_RSP     = 1010;                                                   // 添加用户VR设备响应
+    ID_DEL_USER_VR_DEVICE_REQ     = 1011;                                                   // 删除用户VR设备请求
+    ID_DEL_USER_VR_DEVICE_RSP     = 1012;                                                   // 删除用户VR设备响应
+    ID_UPDATE_DEVICE_NICK_REQ     = 1015;                                                   // 更新VR设备昵称请求
+    ID_UPDATE_DEVICE_NICK_RSP     = 1016;                                                   // 更新VR设备昵称响应
+    ID_UPDATE_DEVICE_TEAM_REQ     = 1017;                                                   // 更新VR设备分组请求
+    ID_UPDATE_DEVICE_TEAM_RSP     = 1018;                                                   // 更新VR设备分组响应
+    ID_UPDATE_DEVICE_PLAY_TIME_REQ = 1019;                                                  // 更新VR设备可玩时段请求
+    ID_UPDATE_DEVICE_PLAY_TIME_RSP = 1020;                                                  // 更新VR设备可玩时段响应
+
+    ID_GET_VR_DEVICE_LIST_REQ     = 1021;                                                   // 获取VR设备列表请求
+    ID_GET_VR_DEVICE_LIST_RSP     = 1022;                                                   // 获取VR设备列表响应
+
+    // ---------------- 💰 支付与钱包业务 (5000 - 5099) ----------------
+    ID_GET_WALLET_REQ             = 5001;                                                   // 获取钱包/积分余额请求
+    ID_GET_WALLET_RSP             = 5002;                                                   // 获取钱包/积分余额响应
+    
+    ID_GET_GOODS_REQ              = 5003;                                                   // 获取充值套餐列表请求
+    ID_GET_GOODS_RSP              = 5004;                                                   // 获取充值套餐列表响应
+    
+    ID_CREATE_ORDER_REQ           = 5005;                                                   // 创建支付订单请求 (点击充值按钮)
+    ID_CREATE_ORDER_RSP           = 5006;                                                   // 创建支付订单响应 (返回支付二维码)
+    
+    ID_ORDER_NOTIFY_PUSH          = 5007;                                                   // 👑 服务端主动推送：支付成功通知 (下发给客户端刷新UI)
+    
+    ID_CONSUME_POINTS_REQ         = 5008;                                                   // 消费积分请求 (点击看电影/玩游戏)
+    ID_CONSUME_POINTS_RSP         = 5009;                                                   // 消费积分响应
+    
+    ID_GET_FLOW_REQ               = 5010;                                                   // 获取积分流水记录请求
+    ID_GET_FLOW_RSP               = 5011;                                                   // 获取积分流水记录响应
+
+    // ---------------- 🎮 游戏服务 (1100 - 1199) ----------------
+    ID_GET_GAME_INFO_REQ          = 1101;                                                   // 获取用户游戏信息请求
+    ID_GET_GAME_INFO_RSP          = 1102;                                                   // 获取用户游戏信息响应
+
+    // ---------------- 📦 客户端自更新 (1200 - 1299) ----------------
+    ID_CLIENT_VERSION_REQ       = 1201;                                                     // 客户端检查版本请求
+    ID_CLIENT_VERSION_RSP       = 1202;                                                     // 客户端检查版本响应
+    ID_DOWNLOAD_EXE_CHUNK_REQ   = 1203;                                                     // 请求下载 exe 分片
+    ID_DOWNLOAD_EXE_CHUNK_RSP   = 1204;                                                     // 返回 exe 分片数据
+}
+
+// =========================================================================================
+// 2. 全局状态错误码 (ErrorCode)
+// =========================================================================================
+enum ErrorCode {
+    ERR_SUCCESS                     = 0;                                                    // 成功
+    
+    // ---------------- 登录与鉴权错误 ----------------
+    ERR_SERVER_INTERNAL             = 1;                                                    // 服务器内部错误
+    ERR_WRONG_PWD                   = 2;                                                    // 账号不存在或密码错误
+    ERR_ACCOUNT_IN_USE              = 3;                                                    // 账号已在其他机器登录 (防多开)
+    ERR_ACCOUNT_EXPIRED             = 4;                                                    // 账号授权已过期
+
+    // ---------------- 🥽 VR设备管理错误 (30 - 39) ----------------
+    ERR_DEVICE_ALREADY_EXISTS       = 30;                                                   // 设备已存在，无法重复添加
+    ERR_DEVICE_NOT_FOUND            = 31;                                                   // 设备不存在或无权限操作
+    ERR_DEVICE_LIMIT_REACHED        = 32;                                                   // 账号绑定的设备数量已达上限
+    ERR_DEVICE_OFFLINE              = 33;                                                   // 设备当前离线，无法操作
+    ERR_DEVICE_ADD_FAILED           = 34;                                                   // 添加设备失败 (系统/数据库异常)
+    ERR_DEVICE_DEL_FAILED           = 35;                                                   // 删除设备失败
+    ERR_DEVICE_UPDATE_FAILED        = 36;                                                   // 更新设备属性失败
+    ERR_DEVICE_QUERY_FAILED         = 37;                                                   // 获取设备列表失败
+
+    // ---------------- 支付与积分错误 ----------------
+    ERR_INSUFFICIENT_POINTS         = 9;                                                    // 余额/积分不足
+    ERR_ORDER_NOT_PAID              = 10;                                                   // 订单未支付
+    ERR_ORDER_CLOSED                = 11;                                                   // 订单已关闭或超时
+    ERR_GOODS_OFFLINE               = 12;                                                   // 充值商品已下架
+    ERR_GENERATE_TOKEN_FAILED       = 13;                                                   // 获取中台AccessToken失败
+    ERR_CREATE_ORDER_FAILED         = 14;                                                   // 创建本地数据库订单失败
+    ERR_PAY_API_FAILED              = 15;                                                   // 向中台请求支付二维码失败
+    ERR_INVALID_PARAM               = 16;                                                   // 参数无效（如自定义金额超限）
+
+    // ---------------- 🎮 游戏服务错误 (40 - 49) ----------------
+    ERR_GAME_NOT_FOUND             = 40;                                                    // 游戏不存在
+    ERR_GAME_QUERY_FAILED          = 41;                                                    // 游戏信息查询失败
+
+    // ---------------- 📦 客户端自更新错误 (42 - 43) ----------------
+    ERR_CLIENT_UP_TO_DATE       = 42;                                                       // 已是最新版本
+    ERR_EXE_FILE_MISSING        = 43;                                                       // 服务端 exe 文件丢失
+}
+
+// =========================================================================================
+// 3. 核心通信包头
+// =========================================================================================
+message PacketHeader {
+    MsgId     msg_id                = 1;                                                    // 【核心】消息ID路由
+    uint64    seq_id                = 2;                                                    // 【复用】请求序列号 (可用于异步回调匹配)
+    ErrorCode error_code            = 3;                                                    // 【状态】0为成功，非0为错误
+    string    error_msg             = 4;                                                    // 【提示】错误时的具体文本，可直接用于客户端弹窗
+}
+
+// =========================================================================================
+// 4. 消费类型枚举 (ConsumeType)
+// =========================================================================================
+enum ConsumeType {
+    CONSUME_UNKNOWN                 = 0;                                                    // 未知消费类型
+    CONSUME_MOVIE                   = 1;                                                    // 看电影
+    CONSUME_GAME                    = 2;                                                    // 玩游戏
+}
+
+// =========================================================================================
+// 5. 积分流水类型枚举 (PointFlowType)
+// =========================================================================================
+enum PointFlowType {
+    FLOW_UNKNOWN                    = 0;                                                    // 未知流水类型
+    FLOW_RECHARGE                   = 1;                                                    // 充值收入
+    FLOW_MOVIE_COST                 = 2;                                                    // 看电影支出
+    FLOW_GAME_COST                  = 3;                                                    // 玩游戏支出
+    FLOW_SYSTEM_GIFT                = 4;                                                    // 系统赠送/退款
+}

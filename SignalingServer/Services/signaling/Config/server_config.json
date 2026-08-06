@@ -1,0 +1,13 @@
+{
+    "Server": {
+        "HttpPort": 8080,
+        "WsPort": 8081,
+        "StunPort": 3478,
+        "MaxConnections": 10000,
+        "WorkerThreads": 4,
+        "LogLevel": "debug"
+    },
+    "Database": {
+        "Path": "./signaling.db"
+    }
+}

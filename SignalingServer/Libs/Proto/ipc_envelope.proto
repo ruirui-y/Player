@@ -1,0 +1,29 @@
+﻿syntax = "proto3";
+package IpcEnvelope;
+
+import "common.proto";
+
+// ===========================================================================
+// Redis 消息队列的通用信封
+// 网关包装请求 → LPUSH → 逻辑/支付服务取走 → 处理 → LPUSH 响应 → 网关回写客户端
+// ===========================================================================
+
+// 请求信封：网关发给逻辑/支付服务
+message EnvelopeRequest {
+    uint64 conn_id                          = 1;        // 网关分配的连接ID（即 socketDescriptor），用于响应时定位会话
+    uint64 account_id                       = 2;        // 用户账号ID（登录前为0，登录成功后由 AuthService 填入真实值）
+    uint64 seq_id                           = 3;        // 客户端请求的序列号
+    ServerApi.MsgId msg_id                  = 4;        // 原始客户端请求的消息ID
+    bytes body_data                         = 5;        // 原始客户端请求体序列化
+}
+
+// 响应信封：逻辑/支付服务返回给网关
+message EnvelopeResponse {
+    uint64 conn_id                          = 1;        // 原样带回的连接ID
+    uint64 account_id                       = 2;        // 用户账号ID（AuthService 登录成功后填入真实值）
+    uint64 seq_id                           = 3;        // 原样返回的请求序列号
+    ServerApi.MsgId msg_id                  = 4;        // 对应的响应消息ID
+    ServerApi.ErrorCode error_code          = 5;
+    string error_msg                        = 6;
+    bytes body_data                         = 7;        // 响应体序列化
+}
