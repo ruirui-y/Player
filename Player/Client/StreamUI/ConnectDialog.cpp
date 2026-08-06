@@ -27,11 +27,6 @@ ConnectDialog::ConnectDialog(QWidget* parent)
         return lb;
     };
 
-    ip_edit_ = new QLineEdit(this);
-    ip_edit_->setObjectName("ConnectIpEdit");
-    ip_edit_->setPlaceholderText("例如: 192.168.1.100");
-    form->addRow(makeLabel("IP 地址:"), ip_edit_);
-
     port_spin_ = new QSpinBox(this);
     port_spin_->setObjectName("ConnectSpin");
     port_spin_->setRange(1024, 65535);
@@ -89,29 +84,25 @@ ConnectDialog::ConnectDialog(QWidget* parent)
         QStringList parts = recent_list_->item(0)->data(Qt::UserRole).toString().split(':');
         if (parts.size() >= 2)
         {
-            ip_edit_->setText(parts[0]);
-            port_spin_->setValue(parts[1].toInt());
-            if (parts.size() >= 3) ctrl_spin_->setValue(parts[2].toInt());
-            if (parts.size() >= 4) fps_spin_->setValue(parts[3].toInt());
+            port_spin_->setValue(parts[0].toInt());
+            if (parts.size() >= 2) ctrl_spin_->setValue(parts[1].toInt());
+            if (parts.size() >= 3) fps_spin_->setValue(parts[2].toInt());
         }
     }
 }
 
 void ConnectDialog::OnConnectClicked()
 {
-    QString ip = ip_edit_->text().trimmed();
-    if (ip.isEmpty()) return;
-
     uint16_t port = static_cast<uint16_t>(port_spin_->value());
     uint16_t ctrl_port = static_cast<uint16_t>(ctrl_spin_->value());
     int fps = fps_spin_->value();
 
     // data: 纯冒号分隔 "ip:port:ctrl:fps"  display: 可读格式
-    QString data    = QString("%1:%2:%3:%4").arg(ip).arg(port).arg(ctrl_port).arg(fps);
-    QString display = QString("%1:%2 @ %3fps").arg(ip).arg(port).arg(fps);
+    QString data    = QString("%1:%2:%3").arg(port).arg(ctrl_port).arg(fps);
+    QString display = QString("%1 @ %2fps").arg(port).arg(fps);
     SaveRecent(data, display);
 
-    emit SigConnect(ip, port, ctrl_port, fps);
+    emit SigConnect(port, ctrl_port, fps);
 }
 
 void ConnectDialog::OnRecentClicked(QListWidgetItem* item)
@@ -120,10 +111,9 @@ void ConnectDialog::OnRecentClicked(QListWidgetItem* item)
     QStringList parts = item->data(Qt::UserRole).toString().split(':');
     if (parts.size() >= 2)
     {
-        ip_edit_->setText(parts[0]);
-        port_spin_->setValue(parts[1].toInt());
-        if (parts.size() >= 3) ctrl_spin_->setValue(parts[2].toInt());
-        if (parts.size() >= 4) fps_spin_->setValue(parts[3].toInt());
+        port_spin_->setValue(parts[0].toInt());
+        if (parts.size() >= 2) ctrl_spin_->setValue(parts[1].toInt());
+        if (parts.size() >= 3) fps_spin_->setValue(parts[2].toInt());
     }
 }
 
@@ -157,8 +147,8 @@ void ConnectDialog::LoadRecent()
         // ---- 生成显示文本 ----
         QStringList parts = data.split(':');
         QString display;
-        if (parts.size() >= 4)
-            display = QString("%1:%2 @ %3fps").arg(parts[0]).arg(parts[1]).arg(parts[3]);
+        if (parts.size() >= 3)
+            display = QString("%1:%2 @ %3fps").arg(parts[0]).arg(parts[1]).arg(parts[2]);
         else if (parts.size() >= 2)
             display = QString("%1:%2").arg(parts[0]).arg(parts[1]);
         else
@@ -190,8 +180,8 @@ void ConnectDialog::SaveRecent(const QString& data, const QString& display)
     {
         QStringList parts = d.split(':');
         QString disp;
-        if (parts.size() >= 4)
-            disp = QString("%1:%2 @ %3fps").arg(parts[0]).arg(parts[1]).arg(parts[3]);
+        if (parts.size() >= 3)
+            disp = QString("%1:%2 @ %3fps").arg(parts[0]).arg(parts[1]).arg(parts[2]);
         else if (parts.size() >= 2)
             disp = QString("%1:%2").arg(parts[0]).arg(parts[1]);
         else
