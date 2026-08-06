@@ -8,6 +8,9 @@
 
 #include "HttpServer/HttpServerMgr.h"
 #include "StunServer.h"
+#include <boost/asio/ip/tcp.hpp>
+
+class WsSession;
 
 // 信令服务器主应用
 class SignalingApp
@@ -21,9 +24,12 @@ public:
     void Stop();
 
 private:
-    void InitHttpRoutes();       // 注册 HTTP API 路由
+    void InitHttpRoutes();
+    void InitWsAcceptor();
+    void DoAcceptWs();           // async_accept 递归
 
     boost::asio::io_context io_ctx_;
+    boost::asio::ip::tcp::acceptor ws_acceptor_{io_ctx_};
     std::unique_ptr<HttpServerMgr> http_;
     std::unique_ptr<StunServer> stun_;
     std::thread http_thread_;

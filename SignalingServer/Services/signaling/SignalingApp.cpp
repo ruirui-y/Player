@@ -3,8 +3,11 @@
 #include "Global/Global.h"
 #include "Global/LogManager.h"
 #include "Global/MetricsMgr.h"
+#include "HttpServer/HttpServerMgr.h"
 #include "HttpServer/httplib.h"
 #include "Thread/ThreadPool.h"
+#include "StunServer.h"
+#include "WsSession.h"
 #include <boost/json.hpp>
 #include <filesystem>
 
@@ -39,6 +42,9 @@ bool SignalingApp::Init()
 
     // ---- Step 5: STUN 服务器 ----
     stun_ = std::make_unique<StunServer>(io_ctx_);
+
+    // ---- Step 6: WebSocket 监听 ----
+    InitWsAcceptor();
 
     LOG_INFO("app", "[SignalingApp] 初始化完成");
     return true;
@@ -210,4 +216,31 @@ void SignalingApp::InitHttpRoutes()
     });
 
     LOG_INFO("app", "[SignalingApp] HTTP 路由注册完成");
+}
+
+// ---- WebSocket 监听 ----
+void SignalingApp::InitWsAcceptor()
+{
+    auto cfg = GlobalConfig::Instance();
+    boost::asio::ip::tcp::endpoint ep(boost::asio::ip::tcp::v4(), cfg->GetWsPort());
+    ws_acceptor_.open(ep.protocol());
+    ws_acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+    ws_acceptor_.bind(ep);
+    ws_acceptor_.listen();
+
+    DoAcceptWs();
+    LOG_INFO("app", "[SignalingApp] WebSocket 监听已启动 :{}", cfg->GetWsPort());
+}
+
+void SignalingApp::DoAcceptWs()
+{
+    ws_acceptor_.async_accept(io_ctx_, [this](boost::beast::error_code ec, boost::asio::ip::tcp::socket socket)
+    {
+        if (!ec)
+        {
+            auto session = WsSession::Create(std::move(socket));
+            session->Start();
+        }
+        DoAcceptWs();
+    });
 }
