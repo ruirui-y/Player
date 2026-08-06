@@ -183,6 +183,12 @@ bool FFmpegPlayer::OpenStream(uint16_t video_port, int fps, uint16_t audio_port)
         return false;
     }
 
+    // ---- 服务端 IP 回调：首包到达时通知 PlayerApp（替代轮询） ----
+    video_receiver_->SetSenderIPCallback([this](const std::string& ip)
+    {
+        emit SigSenderIPReady(QString::fromStdString(ip));
+    });
+
     // ---- 第四步B：创建并初始化 UDP 音频接收器 ----
     if (audio_port > 0)
     {

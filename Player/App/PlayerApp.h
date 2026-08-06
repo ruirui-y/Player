@@ -19,24 +19,23 @@ public:
     explicit PlayerApp(QObject* parent = nullptr);
     ~PlayerApp();
 
-    void Init();                                                // 创建 MainWindow → 显示
+    void Init();                                                                // 创建 MainWindow → 显示
 
     // ---- 引擎管理（由 MainWindow 页面调用） ----
-    void StartPlayer(const QString& path = QString());          // 播放器模式：创建 FFmpegPlayer + 绑定 PlayerPage
-    void StartStream(const QString& ip, uint16_t port,
-                     uint16_t ctrl_port, int fps);              // 控制端模式：创建 FFmpegPlayer + 启动串流
-    void DestroyPlayer();                                       // 销毁播放器引擎
+    void StartPlayer(const QString& path = QString());                          // 播放器模式：创建 FFmpegPlayer + 绑定 PlayerPage
+    void StartStream(uint16_t port, uint16_t ctrl_port, int fps);               // 控制端模式：创建 FFmpegPlayer + 启动串流
+    void DestroyPlayer();                                                       // 销毁播放器引擎
 
-    // 控制端：输入转发启动（由 MainWindow 延迟触发）
+    // 控制端：输入转发启动（SigSenderIPReady 信号触发，不阻塞主线程）
     void OnStreamReady(const QString& ip, uint16_t ctrl_port);
-    bool HasSenderIP() const;                               // 是否已收到服务端视频包
+    bool HasSenderIP() const;
 
 private:
     void LoadStyle();
 
     // 播放器引擎绑定
-    void BindPlayerSignals();                                   // PlayerPage UI ↔ FFmpegPlayer
-    void BindStreamSignals();                                   // StreamWindow UI ↔ FFmpegPlayer
+    void BindPlayerSignals();                                                   // PlayerPage UI ↔ FFmpegPlayer
+    void BindStreamSignals();                                                   // StreamWindow UI ↔ FFmpegPlayer
 
     // 进度控制
     void StartProgressTimer();

@@ -47,7 +47,11 @@ public:
     bool IsRunning() const { return running_; }             // 是否运���中
 
     // 获取视频流发送方 IP（收到第一个 UDP 包后才有值）
-    std::string GetSenderIP() const { return sender_ip_; } // 获取发送方 IP
+    std::string GetSenderIP() const { return sender_ip_; }
+
+    // 首包到达回调（收到第一个 UDP 包时调用，在接收线程中触发）
+    void SetSenderIPCallback(std::function<void(const std::string&)> cb)
+    { sender_ip_cb_ = std::move(cb); } // 获取发送方 IP
 
     // 获取接收帧率（每秒帧数）
     int GetReceiveFps() const { return receive_fps_.load(); }
@@ -72,47 +76,49 @@ public:
     int FecRecoveredFrames() const { return fec_recovered_frames_; }
 
 private:
-    void ReceiveLoop();                                     // 接收线程主循环
+    void ReceiveLoop();                                             // 接收线程主循环
 
-    SOCKET sock_{INVALID_SOCKET};                           // UDP socket
-    sockaddr_in listen_addr_{};                             // 监听地址
-    bool wsa_started_{false};                               // WSA 是否已启动
+    SOCKET sock_{INVALID_SOCKET};                                   // UDP socket
+    sockaddr_in listen_addr_{};                                     // 监听地址
+    bool wsa_started_{false};                                       // WSA 是否已启动
 
-    std::thread recv_thread_;                               // 接收线程
-    std::atomic<bool> running_{false};                      // 运行标志
+    std::thread recv_thread_;                                       // 接收线程
+    std::atomic<bool> running_{false};                              // 运行标志
 
-    SafeQueue<AVPacket*>* packet_queue_{nullptr};           // 输出队列（外部拥有）
-    NalReassembler reassembler_;                            // 组帧器（含 FEC 恢复）
+    SafeQueue<AVPacket*>* packet_queue_{nullptr};                   // 输出队列（外部拥有）
+    NalReassembler reassembler_;                                    // 组帧器（含 FEC 恢复）
 
     // 发送方地址（从第一个 UDP 包获取，用于自动连接控制信道）
-    std::string sender_ip_;                                 // 发送方 IP 地址
+    std::string sender_ip_;                                         // 发送方 IP 地址
 
     // 统计
-    uint64_t total_packets_{0};                             // 收到的 UDP 包总数
-    uint64_t total_frames_{0};                              // 组帧完成的帧总数
+    uint64_t total_packets_{0};                                     // 收到的 UDP 包总数
+    uint64_t total_frames_{0};                                      // 组帧完成的帧总数
 
     // ---- 丢包检测 ----
-    uint16_t expected_frame_index_{0};                      // 期望的下一个 frame_index（0=未初始化）
-    int consecutive_lost_frames_{0};                        // 连续丢失的帧数
-    int total_lost_frames_{0};                              // 总丢帧数
-    int fec_recovered_frames_{0};                           // FEC 恢复的帧数（累计）
+    uint16_t expected_frame_index_{0};                              // 期望的下一个 frame_index（0=未初始化）
+    int consecutive_lost_frames_{0};                                // 连续丢失的帧数
+    int total_lost_frames_{0};                                      // 总丢帧数
+    int fec_recovered_frames_{0};                                   // FEC 恢复的帧数（累计）
 
     // ---- IDR 请求 ----
-    std::function<void()> idr_request_callback_;            // IDR 请求回调
-    std::chrono::steady_clock::time_point last_idr_request_time_;  // 上次 IDR 请求时间
+    std::function<void()> idr_request_callback_;                    // IDR 请求回调
+    std::chrono::steady_clock::time_point last_idr_request_time_;   // 上次 IDR 请求时间
 
     // ---- 网络统计上报 ----
-    std::function<void(const NetworkStats&)> stats_callback_;   // 统计上报回调
-    std::chrono::steady_clock::time_point last_stats_time_;     // 上次统计时间
-    uint64_t last_stats_packets_{0};                            // 上次统计时的包数
-    uint64_t last_stats_frames_{0};                             // 上次统计时的帧数
-    uint64_t last_stats_bytes_{0};                              // 上次统计时的字节数
-    int last_fec_recovered_{0};                                 // 上次统计时的 FEC 恢复数
-    int last_fec_failed_{0};                                    // 上次统计时的 FEC 失败数
-    uint64_t total_bytes_{0};                                   // 累计接收字节数
+    std::function<void(const NetworkStats&)> stats_callback_;       // 统计上报回调
+    std::chrono::steady_clock::time_point last_stats_time_;         // 上次统计时间
+    uint64_t last_stats_packets_{0};                                // 上次统计时的包数
+    uint64_t last_stats_frames_{0};                                 // 上次统计时的帧数
+    uint64_t last_stats_bytes_{0};                                  // 上次统计时的字节数
+    int last_fec_recovered_{0};                                     // 上次统计时的 FEC 恢复数
+    int last_fec_failed_{0};                                        // 上次统计时的 FEC 失败数
+    uint64_t total_bytes_{0};                                       // 累计接收字节数
 
     // OSD 统计
-    std::atomic<int> receive_fps_{0};                           // 接收帧率
+    std::atomic<int> receive_fps_{0};                               // 接收帧率
+
+    std::function<void(const std::string&)> sender_ip_cb_;          // 首包回调
 };
 
 #endif // VIDEORECEIVER_H

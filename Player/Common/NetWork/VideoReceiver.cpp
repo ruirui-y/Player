@@ -124,13 +124,16 @@ void VideoReceiver::ReceiveLoop()
             break;
         }
 
-        // ---- 第一个包：记录发送方 IP（用于自动连接控制信道） ----
+        // ---- 第一个包：记录发送方 IP + 触发回调 ----
         if (sender_ip_.empty())
         {
             char ip_str[INET_ADDRSTRLEN] = {};
             inet_ntop(AF_INET, &from_addr.sin_addr, ip_str, sizeof(ip_str));
             sender_ip_ = ip_str;
             qDebug() << "[VideoReceiver] 发送方 IP:" << sender_ip_.c_str();
+
+            if (sender_ip_cb_)
+                sender_ip_cb_(sender_ip_);
         }
 
         ++total_packets_;

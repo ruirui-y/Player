@@ -196,8 +196,7 @@ void MainWindow::SwitchToStream(StreamWindow* sw)
 // ============== 控制端连接 ==============
 // ================================================================
 
-void MainWindow::OnConnect(const QString& ip, uint16_t port,
-                           uint16_t ctrl_port, int fps)
+void MainWindow::OnConnect(uint16_t port, uint16_t ctrl_port, int fps)
 {
     auto* sw = new StreamWindow(this);
     sw->SetVideoRect(0, 0, 1100, 720);
@@ -205,18 +204,8 @@ void MainWindow::OnConnect(const QString& ip, uint16_t port,
     SwitchToStream(sw);
 
     // 交给 PlayerApp 管理串流引擎
-    app_->StartStream(ip, port, ctrl_port, fps);
-
-    // 延迟启动输入转发（等解码器就绪后再连控制信道，500ms 足够）
-    QTimer* input_timer = new QTimer(this);
-    QObject::connect(input_timer, &QTimer::timeout, this,
-        [this, input_timer, ip, ctrl_port]()
-        {
-            input_timer->stop();
-            input_timer->deleteLater();
-            app_->OnStreamReady(ip, ctrl_port);
-        });
-    input_timer->start(500);
+    // 控制信道在 SigSenderIPReady 信号触发时自动启动，不再用 timer+轮询
+    app_->StartStream(port, ctrl_port, fps);
 }
 
 // ================================================================

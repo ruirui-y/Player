@@ -96,10 +96,8 @@ void PlayerApp::StartPlayer(const QString& path)
     }
 }
 
-void PlayerApp::StartStream(const QString& ip, uint16_t port,
-                            uint16_t ctrl_port, int fps)
+void PlayerApp::StartStream(uint16_t port, uint16_t ctrl_port, int fps)
 {
-    stream_ip_ = ip;
     stream_ctrl_port_ = ctrl_port;
 
     player_ = new FFmpegPlayer(this);
@@ -127,9 +125,8 @@ void PlayerApp::OnStreamReady(const QString& ip, uint16_t ctrl_port)
     StreamWindow* sw = main_window_->GetStreamWindow();
     if (!sw || !player_) return;
 
-    std::string ip_str = ip.toStdString();
-
-    if (!sw->StartInput(ip_str.c_str(), ctrl_port))
+    stream_ip_ = ip;
+    if (!sw->StartInput(stream_ip_.toStdString().c_str(), ctrl_port))
     {
         sw->SetStatusText(u8"控制信道连接失败");
         return;
@@ -279,6 +276,13 @@ void PlayerApp::BindStreamSignals()
 
     QObject::connect(player_, &FFmpegPlayer::SigError, this, [sw](const QString& msg) {
         sw->SetStatusText(u8"错误: " + msg); });
+
+    // 首包到达 → 已知服务端 IP → 启动控制信道（替代 while+Sleep 轮询）
+    QObject::connect(player_, &FFmpegPlayer::SigSenderIPReady, this,
+                     [this](const QString& ip)
+    {
+        OnStreamReady(ip, stream_ctrl_port_);
+    });
 }
 
 // ================================================================
