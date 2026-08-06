@@ -1,7 +1,8 @@
 """WebSocket 推送测试脚本
 用法:
-  python test_ws_client.py                           # 设备 pc1 连接
-  python test_ws_client.py pc2                       # 设备 pc2 连接
+  python test_ws_client.py                            # 设备 pc1 @ localhost
+  python test_ws_client.py pc2                        # 设备 pc2 @ localhost
+  python test_ws_client.py pc1 192.168.1.100          # 远程服务器
 """
 import asyncio
 import websockets
@@ -9,7 +10,8 @@ import json
 import sys
 
 DEVICE_ID = sys.argv[1] if len(sys.argv) > 1 else "pc1"
-WS_URL = "ws://127.0.0.1:8081/ws"
+HOST      = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
+WS_URL    = f"ws://{HOST}:8081/ws"
 
 async def main():
     print(f"[WS Test] {DEVICE_ID} 连接 {WS_URL}")

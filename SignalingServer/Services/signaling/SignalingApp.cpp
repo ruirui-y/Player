@@ -8,6 +8,7 @@
 #include "Thread/ThreadPool.h"
 #include "StunServer.h"
 #include "WsSession.h"
+#include "WsSessionManager.h"
 #include <boost/json.hpp>
 #include <filesystem>
 
@@ -206,6 +207,44 @@ void SignalingApp::InitHttpRoutes()
 
         res.set_content(boost::json::serialize(resp), "application/json");
     });
+
+    // ---- 打洞信令：转发 JSON 到目标设备的 WebSocket ----
+    auto relaySignaling = [](const httplib::Request& req, httplib::Response& res,
+                              const std::string& msg_type)
+    {
+        res.set_header("Content-Type", "application/json");
+
+        auto body = boost::json::parse(req.body);
+        auto obj = body.as_object();
+
+        std::string from = obj.contains("from") ? std::string(obj["from"].as_string().data(),
+            obj["from"].as_string().size()) : "";
+        std::string to = obj.contains("to") ? std::string(obj["to"].as_string().data(),
+            obj["to"].as_string().size()) : "";
+
+        if (from.empty() || to.empty())
+        {
+            res.status = 400;
+            res.set_content(R"({"error":"missing from or to"})", "application/json");
+            return;
+        }
+
+        // 将 JSON 原样转发给目标设备
+        WsSessionManager::Get().SendToDevice(to, req.body);
+
+        res.set_content(R"({"ok":true})", "application/json");
+        MetricsMgr::Instance()->IncrementCounter("signaling_" + msg_type + "_total",
+            "信令 " + msg_type + " 总数", 1);
+    };
+
+    http_->Post("/api/offer", [relaySignaling](const httplib::Request& req, httplib::Response& res)
+        { relaySignaling(req, res, "offer"); });
+
+    http_->Post("/api/answer", [relaySignaling](const httplib::Request& req, httplib::Response& res)
+        { relaySignaling(req, res, "answer"); });
+
+    http_->Post("/api/ice", [relaySignaling](const httplib::Request& req, httplib::Response& res)
+        { relaySignaling(req, res, "ice"); });
 
     // ---- 指标 ----
     http_->Get("/api/metrics", [](const httplib::Request& req, httplib::Response& res)
