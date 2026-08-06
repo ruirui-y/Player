@@ -58,3 +58,5 @@ Movie
 *.mp4
 /Player/Notes/MoonLight/input-system-doc
 /.workbuddy
+/SignalingServer/Tests/reports
+/DemandStationServer_Boost

@@ -29,7 +29,14 @@ void WsSessionManager::SendToDevice(const std::string& device_id, const std::str
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = sessions_.find(device_id);
     if (it != sessions_.end() && it->second)
+    {
+        LOG_INFO("ws", "[WsSessionManager] ↓ 推送到 {} : {} bytes", device_id, json.size());
         it->second->Send(json);
+    }
+    else
+    {
+        LOG_WARN("ws", "[WsSessionManager] 设备不在线: {}", device_id);
+    }
 }
 
 void WsSessionManager::Broadcast(const std::string& json)

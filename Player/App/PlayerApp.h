@@ -7,6 +7,7 @@
 
 class MainWindow;
 class FFmpegPlayer;
+class SignalingClient;
 
 // 应用控制器（第七阶段重构：只管理引擎，不碰 UI 堆栈）
 // Init() 创建 MainWindow，之后 UI 交互全部由 MainWindow 管理
@@ -43,6 +44,7 @@ private:
 
     MainWindow*   main_window_{nullptr};
     FFmpegPlayer* player_{nullptr};
+    SignalingClient* signaling_{nullptr};       // 第九阶段：信令客户端
     QTimer*       progress_timer_{nullptr};
 
     // 串流参数（OnStreamReady 时使用）

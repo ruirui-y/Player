@@ -7,9 +7,11 @@
 #include "Client/StreamUI/StreamWindow.h"
 #include "Client/StreamUI/StreamVideoWidget.h"
 #include "Client/Core/FFmpegPlayer.h"
+#include "Client/Core/SignalingClient.h"
 
 #include <QApplication>
 #include <QFile>
+#include <QSysInfo>
 #include <QSlider>
 #include <QTimer>
 #include <QFileDialog>
@@ -35,6 +37,32 @@ void PlayerApp::Init()
     LoadStyle();
     main_window_ = new MainWindow(this);
     main_window_->show();
+
+    // ---- 第九阶段测试：自动连接信令服务器 ----
+    signaling_ = new SignalingClient(this);
+
+    QString server_host = "192.168.31.142";
+    QString device_id  = QSysInfo::machineHostName();
+
+    // 同机优先 127.0.0.1（Qt 5.14 QWebSocket 连本机公网 IP 偶发 UnsupportedSocketOperationError）
+    if (device_id == "DESKTOP-IASOGT4")
+        server_host = "127.0.0.1";
+
+    qDebug() << "[Signal] 设备ID:" << device_id << " 服务器:" << server_host;
+    signaling_->SetServer(server_host, 8080, 8081);
+
+    signaling_->OnSignaling = [](const QJsonObject& msg) {
+        qDebug() << "[Signal] 收到:" << msg;
+    };
+
+    signaling_->OnDeviceList = [](const QJsonArray& devices) {
+        qDebug() << "[Signal] 设备列表:" << QJsonValue(devices);
+        };
+
+    signaling_->RegisterDevice(device_id, device_id);
+    signaling_->StartHeartbeat(device_id, 30000);
+    signaling_->QueryDevices();
+    signaling_->StartHeartbeat("player_test", 30000);
 }
 
 void PlayerApp::LoadStyle()

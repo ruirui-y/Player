@@ -229,8 +229,12 @@ void SignalingApp::InitHttpRoutes()
             return;
         }
 
+        // 加上 type 字段，方便客户端解析
+        obj["type"] = msg_type;
+        std::string payload = boost::json::serialize(obj);
+
         // 将 JSON 原样转发给目标设备
-        WsSessionManager::Get().SendToDevice(to, req.body);
+        WsSessionManager::Get().SendToDevice(to, payload);
 
         res.set_content(R"({"ok":true})", "application/json");
         MetricsMgr::Instance()->IncrementCounter("signaling_" + msg_type + "_total",

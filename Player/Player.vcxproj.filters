@@ -43,6 +43,9 @@
     <ClCompile Include="Client\Core\FFmpegPlayer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Client\Core\SignalingClient.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Client\Core\D3D11Pipeline.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -216,6 +219,9 @@
     <QtMoc Include="Client\Core\FFmpegPlayer.h">
       <Filter>Header Files</Filter>
     </QtMoc>
+    <ClInclude Include="Client\Core\SignalingClient.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <QtMoc Include="Client\MainUI\MainWindow.h">
       <Filter>Header Files</Filter>
     </QtMoc>

@@ -37,12 +37,12 @@
   </ImportGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="QtSettings">
     <QtInstall>QT5.14.2</QtInstall>
-    <QtModules>core;gui;multimedia;multimediawidgets;network;opengl;widgets</QtModules>
+    <QtModules>core;gui;multimedia;multimediawidgets;network;opengl;widgets;websockets</QtModules>
     <QtBuildConfig>debug</QtBuildConfig>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="QtSettings">
     <QtInstall>QT5.14.2</QtInstall>
-    <QtModules>core;gui;multimedia;multimediawidgets;network;opengl;widgets</QtModules>
+    <QtModules>core;gui;multimedia;multimediawidgets;network;opengl;widgets;websockets</QtModules>
     <QtBuildConfig>release</QtBuildConfig>
   </PropertyGroup>
   <Target Name="QtMsBuildNotFound" BeforeTargets="CustomBuild;ClCompile" Condition="!Exists('$(QtMsBuild)\qt.targets') or !Exists('$(QtMsBuild)\qt.props')">
@@ -124,6 +124,7 @@
     <ClCompile Include="Client\Core\RttMeasurer.cpp" />
     <ClCompile Include="Client\Core\StreamAudioRenderer.cpp" />
     <ClCompile Include="Client\Core\FFmpegPlayer.cpp" />
+    <ClCompile Include="Client\Core\SignalingClient.cpp" />
     <ClCompile Include="Client\Core\D3D11Pipeline.cpp" />
     <ClCompile Include="Client\Core\Nv12GpuUploader.cpp" />
     <ClCompile Include="Client\Core\SoftwareRenderer.cpp" />
@@ -227,6 +228,7 @@
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="Client\Core\FFmpegPlayer.h" />
+    <QtMoc Include="Client\Core\SignalingClient.h" />
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="Client\MainUI\MainWindow.h" />
