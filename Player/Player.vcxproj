@@ -147,7 +147,8 @@
     <ClCompile Include="Server\BitrateController.cpp" />
     <ClCompile Include="Server\OBS_Capture\ObsNvencEncoderFast.cpp" />
     <ClCompile Include="Server\OBS_Capture\CursorCapture.cpp" />
-    <ClCompile Include="Server\OBS_Capture\DcCapture.cpp" />
+    <ClCompile Include="Server\OBS_Capture\CaptureBackend.cpp" />
+    <ClCompile Include="Server\OBS_Capture\GdiCapture.cpp" />
     <ClCompile Include="Server\OBS_Capture\DxgiDuplicator.cpp" />
     <ClCompile Include="Server\OBS_Capture\MonitorCapture.cpp" />
     <ClCompile Include="Server\OBS_Capture\ObsNvencEncoder.cpp" />
@@ -201,8 +202,9 @@
     <ClInclude Include="Server\OBS_Capture\ObsNvencEncoderFast.h" />
     <ClInclude Include="Server\OBS_Capture\IVideoEncoder.h" />
     <ClInclude Include="Server\OBS_Capture\CaptureCommon.h" />
+    <ClInclude Include="Server\OBS_Capture\CaptureBackend.h" />
     <ClInclude Include="Server\OBS_Capture\CursorCapture.h" />
-    <ClInclude Include="Server\OBS_Capture\DcCapture.h" />
+    <ClInclude Include="Server\OBS_Capture\GdiCapture.h" />
     <ClInclude Include="Server\OBS_Capture\DxgiDuplicator.h" />
     <ClInclude Include="Server\OBS_Capture\MonitorCapture.h" />
     <ClInclude Include="Server\OBS_Capture\ObsNvencEncoder.h" />

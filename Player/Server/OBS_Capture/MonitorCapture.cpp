@@ -3,9 +3,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <chrono>
 #include <cstring>
 #include <QDebug>
 #include "Common/LogManager.h"
+#include "DxgiDuplicator.h"
+#include "WgcCapture.h"
+
+// ========== 辅助：采集方法名（日志用） ==========
+static const char* MethodName(DisplayCaptureMethod method);
 
 // ========== 辅助：显示器枚举回调数据 ==========
 
@@ -206,77 +212,69 @@ MonitorCapture::~MonitorCapture()
 
 DisplayCaptureMethod MonitorCapture::ChooseMethod(HMONITOR monitor)
 {
-    // ---- 没有 D3D11 设备 → GDI 回退 ----
+    // ---- 没有 D3D11 设备 → GDI 回退（唯一不依赖 GPU 的路线）----
     if (!device_)
-    {
-        use_gdi_ = true;
-        return DisplayCaptureMethod::Dxgi;                             // 返回值无意义，实际走 GDI
-    }
+        return DisplayCaptureMethod::Gdi;
 
     // ---- WGC 不支持 → 强制 DXGI ----
     if (!WgcCapture::IsSupported())
-    {
         return DisplayCaptureMethod::Dxgi;
-    }
 
-    if (method_ == DisplayCaptureMethod::Auto)
+    // ---- 用户显式指定（非 Auto）→ 直接用 ----
+    if (method_ != DisplayCaptureMethod::Auto)
+        return method_;
+
+    // ---- Auto：默认 DXGI，按环境升级 WGC ----
+    // DXGI 拿不到显示器索引 → 切换 WGC
+    if (DxgiDuplicator::GetMonitorIndex(monitor) == -1)
+        return DisplayCaptureMethod::Wgc;
+
+    // 笔记本电池 + 双显卡 → 切换 WGC（省电/兼容）
+    if (IsLaptopDualGpu())
+        return DisplayCaptureMethod::Wgc;
+
+    return DisplayCaptureMethod::Dxgi;
+}
+
+// ========== 笔记本电池 + 双显卡判定 ==========
+
+bool MonitorCapture::IsLaptopDualGpu() const
+{
+    SYSTEM_POWER_STATUS status;
+    if (!GetSystemPowerStatus(&status) || status.BatteryFlag >= 128)
+        return false;
+
+    IDXGIFactory1* factory = nullptr;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),
+                                  reinterpret_cast<void**>(&factory))))
+        return false;
+
+    UINT adapter_count = 0;
+    IDXGIAdapter1* adapter = nullptr;
+    while (factory->EnumAdapters1(adapter_count, &adapter) != DXGI_ERROR_NOT_FOUND)
     {
-        // ---- AUTO 模式：默认 DXGI ----
-        DisplayCaptureMethod result = DisplayCaptureMethod::Dxgi;
-
-        // ---- DXGI 无法获取该显示器索引 → 切换 WGC ----
-        int dxgi_index = DxgiDuplicator::GetMonitorIndex(monitor);
-        if (dxgi_index == -1)
-        {
-            result = DisplayCaptureMethod::Wgc;
-        }
-        else
-        {
-            // ---- 笔记本电池 + 双显卡 → 切换 WGC（省电/兼容性） ----
-            SYSTEM_POWER_STATUS status;
-            if (GetSystemPowerStatus(&status) && status.BatteryFlag < 128)
-            {
-                IDXGIFactory1* factory = nullptr;
-                if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),
-                                                   reinterpret_cast<void**>(&factory))))
-                {
-                    UINT adapter_count = 0;
-                    IDXGIAdapter1* adapter = nullptr;
-                    while (factory->EnumAdapters1(adapter_count, &adapter) != DXGI_ERROR_NOT_FOUND)
-                    {
-                        adapter->Release();
-                        adapter_count++;
-                    }
-                    factory->Release();
-
-                    if (adapter_count >= 2)
-                    {
-                        result = DisplayCaptureMethod::Wgc;
-                    }
-                }
-            }
-        }
-
-        return result;
+        adapter->Release();
+        adapter_count++;
     }
+    factory->Release();
 
-    return method_;
+    return adapter_count >= 2;
 }
 
 // ========== 释放采集资源（保留设备） ==========
 
 void MonitorCapture::FreeCaptureData()
 {
-    wgc_.Shutdown();
-    dxgi_.Shutdown();
-    gdi_.Free();
+    if (backend_)
+    {
+        backend_->Shutdown();
+        backend_.reset();
+    }
 
     width_ = 0;
     height_ = 0;
     rotation_ = 0;
-    monitor_x_ = 0;
-    monitor_y_ = 0;
-    reset_timeout_ = 0.0f;
+    next_retry_ = {};
 }
 
 // ========== 重新查找显示器句柄 ==========
@@ -287,6 +285,7 @@ void MonitorCapture::UpdateMonitorHandle()
     if (FindMonitorById(monitor_id_, info))
     {
         handle_ = info.handle;
+        rect_ = info.rect;
     }
 }
 
@@ -306,46 +305,18 @@ bool MonitorCapture::Init(ID3D11Device* device, const char* monitor_id,
 
     // ---- 查找显示器句柄 ----
     MonitorInfo info;
-    if (FindMonitorById(monitor_id_, info))
-    {
-        handle_ = info.handle;
-    }
-    else
+    if (!FindMonitorById(monitor_id_, info))
     {
         return false;
     }
+    handle_ = info.handle;
+    rect_ = info.rect;
 
-    // ---- 选择采集方法 ----
-    DisplayCaptureMethod chosen = ChooseMethod(handle_);
-    if (use_gdi_)
-    {
-        // ---- GDI 回退路线 ----
-        uint32_t w = info.rect.right - info.rect.left;
-        uint32_t h = info.rect.bottom - info.rect.top;
-        gdi_.Init(info.rect.left, info.rect.top, w, h, capture_cursor_);
-        width_ = w;
-        height_ = h;
-    }
-
-    reset_timeout_ = RESET_INTERVAL_SEC;
+    // ---- 解析实际生效方法（后端在首次 Capture 时懒创建）----
+    active_method_ = ChooseMethod(handle_);
 
     // ---- 打印实际使用的采集方法 ----
-    const char* method_name = "unknown";
-    if (use_gdi_)
-    {
-        method_name = "GDI";
-    }
-    else
-    {
-        DisplayCaptureMethod chosen = ChooseMethod(handle_);
-        switch (chosen)
-        {
-        case DisplayCaptureMethod::Dxgi: method_name = "DXGI"; break;
-        case DisplayCaptureMethod::Wgc: method_name = "WGC"; break;
-        case DisplayCaptureMethod::Auto: method_name = "Auto"; break;
-        }
-    }
-    qDebug("[MonitorCapture] 采集方法: %s", method_name);
+    qDebug("[MonitorCapture] 采集方法: %s", MethodName(active_method_));
 
     return true;
 }
@@ -357,199 +328,119 @@ void MonitorCapture::Shutdown()
     FreeCaptureData();
     device_ = nullptr;
     handle_ = nullptr;
+    rect_ = {0, 0, 0, 0};
     showing_ = false;
-    use_gdi_ = false;
+    active_method_ = DisplayCaptureMethod::Auto;
 }
 
-// ========== 每帧调用 ==========
+// ========== 采集方法名（日志用） ==========
 
-void MonitorCapture::Tick(float delta_seconds)
+static const char* MethodName(DisplayCaptureMethod method)
 {
-    // ---- GDI 路线：直接 BitBlt 采集 ----
-    if (use_gdi_)
+    switch (method)
     {
-        gdi_.Capture(nullptr);
+    case DisplayCaptureMethod::Gdi:  return "GDI";
+    case DisplayCaptureMethod::Dxgi: return "DXGI";
+    case DisplayCaptureMethod::Wgc:  return "WGC";
+    case DisplayCaptureMethod::Auto: return "Auto";
+    }
+    return "unknown";
+}
+
+// ========== 确保后端就绪（创建/切换 + 3 秒退避重建） ==========
+
+void MonitorCapture::EnsureBackend()
+{
+    // ---- 方法变化或后端缺失 → 切换后端 ----
+    if (!backend_ || backend_->Kind() != active_method_)
+    {
+        backend_ = CreateCaptureBackend(active_method_);
+        next_retry_ = {};
+        if (!backend_)
+        {
+            return;
+        }
+    }
+
+    // ---- 同步初始化参数（handle/rect 可能已被刷新） ----
+    ctx_.device = device_;
+    ctx_.monitor = handle_;
+    ctx_.rect = rect_;
+    ctx_.capture_cursor = capture_cursor_;
+    ctx_.force_sdr = force_sdr_;
+
+    // ---- 后端可用或未到退避时间 → 直接返回 ----
+    auto now = std::chrono::steady_clock::now();
+    if (backend_->IsActive() || now < next_retry_)
+    {
         return;
     }
 
+    // ---- 退避到期 → 尝试初始化；失败后重新查找句柄再试一次 ----
+    if (backend_->Init(ctx_))
+    {
+        next_retry_ = {};
+        return;
+    }
+
+    UpdateMonitorHandle();
+    ctx_.monitor = handle_;
+    if (backend_->Init(ctx_))
+    {
+        next_retry_ = {};
+        return;
+    }
+
+    LogManager::Log("WARN", "[MonitorCapture] %s 初始化失败，3 秒后重试", MethodName(active_method_));
+    next_retry_ = now + std::chrono::seconds(static_cast<long>(RESET_INTERVAL_SEC));
+}
+
+// ========== 采集一帧（原 Tick + GetFrame 合并） ==========
+
+bool MonitorCapture::Capture(CaptureFrame& out_frame)
+{
     // ---- 没有显示器句柄时尝试重新查找 ----
     if (!handle_)
     {
         UpdateMonitorHandle();
         if (!handle_)
         {
-            return;
+            return false;
         }
     }
 
-    DisplayCaptureMethod chosen = ChooseMethod(handle_);
+    // ---- 解析当前生效方法（Auto 可随环境在 Dxgi/Wgc 间切换）----
+    active_method_ = ChooseMethod(handle_);
 
-    // ---- WGC 路线 ----
-    if (chosen == DisplayCaptureMethod::Wgc)
+    // ---- 确保后端就绪 ----
+    EnsureBackend();
+    if (!backend_ || !backend_->IsActive())
     {
-        // ---- 需要重置 WGC 时先释放 ----
-        if (reset_wgc_ && wgc_.IsActive())
-        {
-            wgc_.Shutdown();
-            reset_wgc_ = false;
-            reset_timeout_ = RESET_INTERVAL_SEC;
-        }
-
-        // ---- 没有活跃的 WGC 实例 → 等待 3 秒重试 ----
-        if (!wgc_.IsActive())
-        {
-            reset_timeout_ += delta_seconds;
-
-            if (reset_timeout_ >= RESET_INTERVAL_SEC)
-            {
-                // ---- 尝试初始化 WGC ----
-                if (!wgc_.InitMonitor(device_, handle_, capture_cursor_, force_sdr_))
-                {
-                    // ---- 第一次失败后重新查找显示器句柄再试 ----
-                    UpdateMonitorHandle();
-                    if (handle_)
-                    {
-                        wgc_.InitMonitor(device_, handle_, capture_cursor_, force_sdr_);
-                    }
-                }
-
-                reset_timeout_ = 0.0f;
-            }
-        }
-
-        // ---- 有活跃实例时检查帧 ----
-        if (wgc_.IsActive())
-        {
-            wgc_.Tick();
-            width_ = wgc_.Width();
-            height_ = wgc_.Height();
-        }
+        return false;
     }
-    else
+
+    // ---- 采集一帧 ----
+    if (!backend_->AcquireFrame())
     {
-        // ---- DXGI 路线 ----
-        // 如果 WGC 实例还在，先释放
-        if (wgc_.IsActive())
+        // ---- 后端刚死亡（如 DXGI ACCESS_LOST）→ 下一帧立即重建一次，失败再进 3 秒退避 ----
+        if (!backend_->IsActive() && next_retry_ == std::chrono::steady_clock::time_point{})
         {
-            wgc_.Shutdown();
+            next_retry_ = std::chrono::steady_clock::now();
         }
+        return false;
+    }
 
-        if (!dxgi_.IsActive())
-        {
-            reset_timeout_ += delta_seconds;
-
-            if (reset_timeout_ >= RESET_INTERVAL_SEC)
-            {
-                // ---- 尝试初始化 DXGI ----
-                int dxgi_index = DxgiDuplicator::GetMonitorIndex(handle_);
-                if (dxgi_index == -1)
-                {
-                    UpdateMonitorHandle();
-                    if (handle_)
-                    {
-                        if (!dxgi_.Init(device_, handle_))
-                        {
-                            LogManager::Log("WARN", "[MonitorCapture] DXGI 重建失败（显示器句柄无效）");
-                        }
-                    }
-                }
-                else
-                {
-                    if (!dxgi_.Init(device_, handle_))
-                    {
-                        LogManager::Log("WARN", "[MonitorCapture] DXGI 重建失败");
-                    }
-                }
-
-                reset_timeout_ = 0.0f;
-            }
-        }
-
-        // ---- 有活跃实例时更新帧 ----
-        if (dxgi_.IsActive())
-        {
-            // ---- 采集光标（DXGI 路线需要外部光标合成） ----
-            //if (capture_cursor_)
-            //{
-            //    cursor_.Capture();
-            //}
-
-            // ---- 更新帧，失败时释放资源等待重试 ----
-            if (!dxgi_.UpdateFrame())
-            {
-                // ---- DXGI 失效 → 只重建 DXGI，不调用 FreeCaptureData ----
-                // 保留 width_/height_/monitor_x_/monitor_y_ 等状态，避免恢复后尺寸归零
-                // 立即尝试重建，不等待 3 秒（减少推流中断时间）
-                LogManager::Log("WARN", "[MonitorCapture] DXGI UpdateFrame 失败，立即重建");
-                dxgi_.Shutdown();
-                dxgi_.Init(device_, handle_);
-            }
-            else if (width_ == 0)
-            {
-                // ---- 首次成功 → 读取尺寸和偏移 ----
-                width_ = dxgi_.Width();
-                height_ = dxgi_.Height();
-                rotation_ = dxgi_.Rotation();
-                monitor_x_ = dxgi_.MonitorX();
-                monitor_y_ = dxgi_.MonitorY();
-            }
-        }
+    // ---- 刷新几何信息（防 0 值覆盖） ----
+    uint32_t frame_width = backend_->Width();
+    if (frame_width > 0)
+    {
+        width_ = frame_width;
+        height_ = backend_->Height();
+        rotation_ = backend_->Rotation();
     }
 
     showing_ = true;
-}
-
-// ========== 获取当前帧 ==========
-
-bool MonitorCapture::GetFrame(CaptureFrame& out_frame)
-{
-    if (use_gdi_)
-    {
-        // ---- GDI 路线：返回 CPU 内存数据 ----
-        const uint8_t* data = nullptr;
-        uint32_t stride = 0;
-        if (gdi_.GetFrame(data, stride))
-        {
-            out_frame.gpu_texture = nullptr;
-            out_frame.cpu_data = data;
-            out_frame.cpu_stride = stride;
-            out_frame.width = gdi_.Width();
-            out_frame.height = gdi_.Height();
-            out_frame.rotation = 0;
-            return true;
-        }
-        return false;
-    }
-
-    if (method_ == DisplayCaptureMethod::Wgc || wgc_.IsActive())
-    {
-        // ---- WGC 路线：返回 GPU 纹理 ----
-        ID3D11Texture2D* tex = wgc_.GetTexture();
-        if (tex)
-        {
-            out_frame.gpu_texture = tex;
-            out_frame.cpu_data = nullptr;
-            out_frame.width = wgc_.Width();
-            out_frame.height = wgc_.Height();
-            out_frame.rotation = 0;
-            return true;
-        }
-        return false;
-    }
-
-    // ---- DXGI 路线：返回 GPU 纹理 ----
-    ID3D11Texture2D* tex = dxgi_.GetTexture();
-    if (tex)
-    {
-        out_frame.gpu_texture = tex;
-        out_frame.cpu_data = nullptr;
-        out_frame.width = dxgi_.Width();
-        out_frame.height = dxgi_.Height();
-        out_frame.rotation = dxgi_.Rotation();
-        return true;
-    }
-
-    return false;
+    return backend_->GetFrame(out_frame);
 }
 
 // ========== 获取光标信息 ==========
@@ -558,7 +449,7 @@ bool MonitorCapture::GetCursorInfo(CursorInfo& out_info)
 {
     // ---- WGC 路线光标由内部处理，GDI 路线光标已叠加到画面 ----
     // ---- 仅 DXGI 路线需要外部光标合成 ----
-    if (use_gdi_ || wgc_.IsActive())
+    if (!backend_ || backend_->Kind() != DisplayCaptureMethod::Dxgi)
     {
         return false;
     }
@@ -575,15 +466,7 @@ bool MonitorCapture::GetCursorInfo(CursorInfo& out_info)
 
 uint32_t MonitorCapture::Width() const
 {
-    if (use_gdi_)
-    {
-        return gdi_.Width();
-    }
-    if (wgc_.IsActive())
-    {
-        return wgc_.Width();
-    }
-    // ---- DXGI 路线考虑旋转：90/270 度时宽高互换 ----
+    // ---- 考虑旋转：90/270 度时宽高互换（仅 DXGI 有非 0 旋转） ----
     if (rotation_ % 180 == 0)
     {
         return width_;
@@ -593,14 +476,6 @@ uint32_t MonitorCapture::Width() const
 
 uint32_t MonitorCapture::Height() const
 {
-    if (use_gdi_)
-    {
-        return gdi_.Height();
-    }
-    if (wgc_.IsActive())
-    {
-        return wgc_.Height();
-    }
     if (rotation_ % 180 == 0)
     {
         return height_;
@@ -610,14 +485,10 @@ uint32_t MonitorCapture::Height() const
 
 DisplayCaptureMethod MonitorCapture::Method() const
 {
-    return method_;
+    return active_method_;
 }
 
 bool MonitorCapture::IsActive() const
 {
-    if (use_gdi_)
-    {
-        return gdi_.IsValid();
-    }
-    return dxgi_.IsActive() || wgc_.IsActive();
+    return backend_ && backend_->IsActive();
 }

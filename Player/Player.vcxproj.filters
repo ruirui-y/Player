@@ -91,7 +91,10 @@
     <ClCompile Include="Server\OBS_Capture\CursorCapture.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Server\OBS_Capture\DcCapture.cpp">
+    <ClCompile Include="Server\OBS_Capture\CaptureBackend.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Server\OBS_Capture\GdiCapture.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Server\OBS_Capture\DxgiDuplicator.cpp">
@@ -290,7 +293,10 @@
     <ClInclude Include="Server\OBS_Capture\CursorCapture.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Server\OBS_Capture\DcCapture.h">
+    <ClInclude Include="Server\OBS_Capture\CaptureBackend.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Server\OBS_Capture\GdiCapture.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Server\OBS_Capture\DxgiDuplicator.h">

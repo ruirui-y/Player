@@ -1,12 +1,17 @@
 #include "WgcCapture.h"
 
+#include "Common/LogManager.h"
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
 #include <roapi.h>
 #include <wrl.h>
 
+#include <windows.graphics.directx.direct3d11.interop.h>   // 声明 CreateDirect3D11DeviceFromDXGIDevice
+
 #pragma comment(lib, "runtimeobject.lib")
+#pragma comment(lib, "windows.graphics.directx.direct3d11.lib")   // 链接导入库，禁止 LoadLibrary 按 API 集名加载（会 126）
 
 // ========== 辅助：HSTRING 管理 ==========
 
@@ -146,35 +151,20 @@ bool WgcCapture::CreateDirect3DDeviceFromD3D11(ID3D11Device* d3d11_device)
                                                 reinterpret_cast<void**>(&dxgi_device_));
     if (FAILED(hr))
     {
+        LogManager::Log("ERR", "[WgcCapture] QI IDXGIDevice 失败: hr=0x%08X", (unsigned)hr);
         return false;
     }
 
-    // ---- 动态加载 CreateDirect3D11DeviceFromDXGIDevice ----
-    HMODULE module = LoadLibraryW(L"windows.graphics.directx.direct3d11.dll");
-    if (!module)
-    {
-        return false;
-    }
-
-    typedef HRESULT(WINAPI* PFN_CreateDirect3D11DeviceFromDXGIDevice)(
-        IDXGIDevice*, IInspectable**);
-
-    auto pfn = reinterpret_cast<PFN_CreateDirect3D11DeviceFromDXGIDevice>(
-        GetProcAddress(module, "CreateDirect3D11DeviceFromDXGIDevice"));
-
-    if (!pfn)
-    {
-        FreeLibrary(module);
-        return false;
-    }
-
-    // ---- 调用函数获取 IInspectable，再 QI 为 IDirect3DDevice ----
+    // ---- 直接调用 CreateDirect3D11DeviceFromDXGIDevice ----
+    // 注意：该函数在 windows.graphics.directx.direct3d11.dll 中，但它是 Win32 API 集，
+    // 不能用 LoadLibrary 按文件名运行时加载（会 126 ERROR_MOD_NOT_FOUND）。
+    // 正确做法是链接 SDK 导入库 windows.graphics.directx.direct3d11.lib（见文件顶部 pragma）。
     IInspectable* inspectable = nullptr;
-    hr = pfn(dxgi_device_, &inspectable);
-    FreeLibrary(module);
+    hr = CreateDirect3D11DeviceFromDXGIDevice(dxgi_device_, &inspectable);
 
     if (FAILED(hr) || !inspectable)
     {
+        LogManager::Log("ERR", "[WgcCapture] CreateDirect3D11DeviceFromDXGIDevice 失败: hr=0x%08X", (unsigned)hr);
         return false;
     }
 
@@ -200,6 +190,8 @@ bool WgcCapture::CreateItemForMonitor(HMONITOR monitor)
                                          reinterpret_cast<void**>(&interop));
     if (FAILED(hr) || !interop)
     {
+        LogManager::Log("ERR", "[WgcCapture] CreateItemForMonitor: RoGetActivationFactory 失败 hr=0x%08X (未 RoInitialize? 0x800401F0)",
+                        (unsigned)hr);
         return false;
     }
 
@@ -209,6 +201,10 @@ bool WgcCapture::CreateItemForMonitor(HMONITOR monitor)
                                     reinterpret_cast<void**>(&item_));
     interop->Release();
 
+    if (FAILED(hr) || !item_)
+    {
+        LogManager::Log("ERR", "[WgcCapture] CreateItemForMonitor: CreateForMonitor 失败 hr=0x%08X", (unsigned)hr);
+    }
     return SUCCEEDED(hr) && item_ != nullptr;
 }
 
@@ -224,6 +220,8 @@ bool WgcCapture::CreateItemForWindow(HWND window)
                                          reinterpret_cast<void**>(&interop));
     if (FAILED(hr) || !interop)
     {
+        LogManager::Log("ERR", "[WgcCapture] CreateItemForWindow: RoGetActivationFactory 失败 hr=0x%08X (未 RoInitialize? 0x800401F0)",
+                        (unsigned)hr);
         return false;
     }
 
@@ -233,6 +231,10 @@ bool WgcCapture::CreateItemForWindow(HWND window)
                                    reinterpret_cast<void**>(&item_));
     interop->Release();
 
+    if (FAILED(hr) || !item_)
+    {
+        LogManager::Log("ERR", "[WgcCapture] CreateItemForWindow: CreateForWindow 失败 hr=0x%08X", (unsigned)hr);
+    }
     return SUCCEEDED(hr) && item_ != nullptr;
 }
 
@@ -261,6 +263,7 @@ bool WgcCapture::StartCapture()
                                          reinterpret_cast<void**>(&pool_stats));
     if (FAILED(hr) || !pool_stats)
     {
+        LogManager::Log("ERR", "[WgcCapture] StartCapture: RoGetActivationFactory(FramePool) 失败 hr=0x%08X", (unsigned)hr);
         return false;
     }
 
@@ -274,6 +277,7 @@ bool WgcCapture::StartCapture()
 
     if (FAILED(hr) || !frame_pool_)
     {
+        LogManager::Log("ERR", "[WgcCapture] StartCapture: FramePool::Create 失败 hr=0x%08X", (unsigned)hr);
         return false;
     }
 
@@ -286,6 +290,7 @@ bool WgcCapture::StartCapture()
     hr = frame_pool_->add_FrameArrived(handler.Get(), &frame_arrived_token_);
     if (FAILED(hr))
     {
+        LogManager::Log("ERR", "[WgcCapture] StartCapture: add_FrameArrived 失败 hr=0x%08X", (unsigned)hr);
         return false;
     }
 
@@ -295,12 +300,14 @@ bool WgcCapture::StartCapture()
     if (FAILED(hr))
     {
         // Closed 事件注册失败不影响核心功能
+        LogManager::Log("DBG", "[WgcCapture] StartCapture: add_Closed 失败(忽略) hr=0x%08X", (unsigned)hr);
     }
 
     // ---- 创建 CaptureSession ----
     hr = frame_pool_->CreateCaptureSession(item_, &session_);
     if (FAILED(hr) || !session_)
     {
+        LogManager::Log("ERR", "[WgcCapture] StartCapture: CreateCaptureSession 失败 hr=0x%08X", (unsigned)hr);
         return false;
     }
 
@@ -338,82 +345,62 @@ void WgcCapture::ReleaseFrame()
     }
 }
 
-// ========== 显示器采集初始化 ==========
+// ========== 初始化（CaptureBackend 接口，合并 Monitor/Window 两条路线） ==========
 
-bool WgcCapture::InitMonitor(ID3D11Device* device, HMONITOR monitor, bool cursor, bool force_sdr)
+bool WgcCapture::Init(const BackendContext& ctx)
 {
     Shutdown();
 
-    if (!device || !monitor)
+    if (!ctx.device)
     {
+        LogManager::Log("ERR", "[WgcCapture] Init 失败: ctx.device 为空");
         return false;
     }
 
-    device_ = device;
-    cursor_ = cursor;
-    force_sdr_ = force_sdr;
+    device_ = ctx.device;
+    cursor_ = ctx.capture_cursor;
+    force_sdr_ = ctx.force_sdr;
+    client_area_ = ctx.client_area;
 
     // ---- 第一步：创建 WinRT Direct3D 设备 ----
+    LogManager::Log("DBG", "[WgcCapture] Init 第一步: CreateDirect3DDeviceFromD3D11");
     if (!CreateDirect3DDeviceFromD3D11(device_))
     {
+        LogManager::Log("ERR", "[WgcCapture] Init 失败: 第一步 CreateDirect3DDeviceFromD3D11 返回 false");
         Shutdown();
         return false;
     }
 
-    // ---- 第二步：创建 GraphicsCaptureItem ----
-    if (!CreateItemForMonitor(monitor))
+    // ---- 第二步：创建 GraphicsCaptureItem（窗口路线优先，否则显示器路线） ----
+    if (ctx.window)
     {
+        LogManager::Log("DBG", "[WgcCapture] Init 第二步: CreateItemForWindow hwnd=%p", (void*)ctx.window);
+    }
+    else
+    {
+        LogManager::Log("DBG", "[WgcCapture] Init 第二步: CreateItemForMonitor hmonitor=%p", (void*)ctx.monitor);
+    }
+    bool item_ok = ctx.window ? CreateItemForWindow(ctx.window)
+                              : CreateItemForMonitor(ctx.monitor);
+    if (!item_ok)
+    {
+        LogManager::Log("ERR", "[WgcCapture] Init 失败: 第二步 创建 GraphicsCaptureItem 返回 false (window=%d)",
+                        ctx.window ? 1 : 0);
         Shutdown();
         return false;
     }
 
     // ---- 第三步：创建 FramePool + Session 并启动 ----
+    LogManager::Log("DBG", "[WgcCapture] Init 第三步: StartCapture");
     if (!StartCapture())
     {
+        LogManager::Log("ERR", "[WgcCapture] Init 失败: 第三步 StartCapture 返回 false");
         Shutdown();
         return false;
     }
 
-    return true;
-}
-
-// ========== 窗口采集初始化 ==========
-
-bool WgcCapture::InitWindow(ID3D11Device* device, HWND window, bool client_area, bool cursor, bool force_sdr)
-{
-    Shutdown();
-
-    if (!device || !window)
-    {
-        return false;
-    }
-
-    device_ = device;
-    cursor_ = cursor;
-    force_sdr_ = force_sdr;
-    client_area_ = client_area;
-
-    // ---- 第一步：创建 WinRT Direct3D 设备 ----
-    if (!CreateDirect3DDeviceFromD3D11(device_))
-    {
-        Shutdown();
-        return false;
-    }
-
-    // ---- 第二步：创建 GraphicsCaptureItem ----
-    if (!CreateItemForWindow(window))
-    {
-        Shutdown();
-        return false;
-    }
-
-    // ---- 第三步：创建 FramePool + Session 并启动 ----
-    if (!StartCapture())
-    {
-        Shutdown();
-        return false;
-    }
-
+    LogManager::Log("INFO", "[WgcCapture] Init 成功: %ux%u cursor=%d force_sdr=%d client_area=%d",
+                    width_, height_, cursor_ ? 1 : 0, force_sdr_ ? 1 : 0, client_area_ ? 1 : 0);
     return true;
 }
 
@@ -478,6 +465,41 @@ void WgcCapture::Shutdown()
     active_ = false;
     new_frame_arrived_ = false;
     closed_ = false;
+}
+
+// ========== 采集一帧（CaptureBackend 接口） ==========
+
+bool WgcCapture::AcquireFrame()
+{
+    // ---- WGC 为推模式：泵一下内部 Tick，只要 backend 仍活跃即返回 true ----
+    // ---- 区分于 DXGI：Tick 返回 false 仅表示“本帧无新画面”，不代表 backend 死亡 ----
+    Tick();
+    return IsActive();
+}
+
+// ========== 获取当前帧（CaptureBackend 接口） ==========
+
+bool WgcCapture::GetFrame(CaptureFrame& out)
+{
+    ID3D11Texture2D* tex = GetTexture();
+    if (!tex)
+    {
+        return false;
+    }
+
+    out.gpu_texture = tex;
+    out.cpu_data = nullptr;
+    out.width = width_;
+    out.height = height_;
+    out.rotation = 0;
+    return true;
+}
+
+// ========== 设置光标隐藏（CaptureBackend 接口） ==========
+
+void WgcCapture::SetCursorHidden(bool hidden)
+{
+    ShowCursor(!hidden);
 }
 
 // ========== FrameArrived 事件回调 ==========

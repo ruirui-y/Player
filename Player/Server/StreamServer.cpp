@@ -104,8 +104,7 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
     int wait = 0;
     while (wait < 300)
     {
-        capture_->Tick(1.0f / fps_);
-        if (capture_->GetFrame(frame) && frame.IsValid())
+        if (capture_->Capture(frame) && frame.IsValid())
             break;
         ++wait;
         Sleep(16);
@@ -318,10 +317,8 @@ void StreamServer::Run()
         auto frame_start = std::chrono::steady_clock::now();
 
         // ---- 第一步：采集 ----
-        capture_->Tick(1.0f / fps_);
-
         CaptureFrame frame;
-        if (!capture_->GetFrame(frame) || !frame.IsValid())
+        if (!capture_->Capture(frame) || !frame.IsValid())
         {
             // ---- 采集失败，记录日志（每秒一次避免刷屏） ----
             consecutive_failures_++;

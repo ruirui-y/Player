@@ -188,6 +188,13 @@ bool DxgiDuplicator::Init(ID3D11Device* device, HMONITOR monitor)
     return CreateDuplication();
 }
 
+// ========== 初始化（CaptureBackend 接口） ==========
+
+bool DxgiDuplicator::Init(const BackendContext& ctx)
+{
+    return Init(ctx.device, ctx.monitor);
+}
+
 // ========== 释放 ==========
 
 void DxgiDuplicator::Shutdown()
@@ -385,4 +392,31 @@ int DxgiDuplicator::MonitorY() const
 bool DxgiDuplicator::IsActive() const
 {
     return active_;
+}
+
+// ========== 采集一帧（CaptureBackend 接口） ==========
+
+bool DxgiDuplicator::AcquireFrame()
+{
+    // ---- UpdateFrame 返回 false 表示真错误（ACCESS_LOST 等） → 触发重建 ----
+    // ---- 超时/桌面无变化返回 true（保留上一帧），不视为失败 ----
+    return UpdateFrame();
+}
+
+// ========== 获取当前帧（CaptureBackend 接口） ==========
+
+bool DxgiDuplicator::GetFrame(CaptureFrame& out)
+{
+    ID3D11Texture2D* tex = GetTexture();
+    if (!tex)
+    {
+        return false;
+    }
+
+    out.gpu_texture = tex;
+    out.cpu_data = nullptr;
+    out.width = width_;
+    out.height = height_;
+    out.rotation = rotation_;
+    return true;
 }

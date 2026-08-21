@@ -234,8 +234,11 @@ bool WindowCapture::Init(ID3D11Device* device, HWND window, WindowCaptureMethod 
 
 void WindowCapture::Shutdown()
 {
-    wgc_capture_.Shutdown();
-    dc_capture_.Free();
+    if (backend_)
+    {
+        backend_->Shutdown();
+    }
+    backend_.reset();
 
     device_ = nullptr;
     window_ = nullptr;
@@ -251,10 +254,7 @@ void WindowCapture::Shutdown()
 
 void WindowCapture::Tick(float delta_seconds)
 {
-    RECT rect;
-    bool reset_capture = false;
-
-    // ---- 窗口不存在时等待重试 ----
+    // ---- 窗口不存在 → 释放后端资源，按周期重试（不自动查找，由调用方重新 Init） ----
     if (!window_ || !IsWindow(window_))
     {
         if (hooked_)
@@ -262,29 +262,16 @@ void WindowCapture::Tick(float delta_seconds)
             hooked_ = false;
         }
 
-        // ---- 释放采集资源 ----
-        if (dc_capture_.IsValid())
+        if (backend_ && backend_->IsActive())
         {
-            dc_capture_.Free();
+            backend_->Shutdown();
         }
 
-        // ---- 每秒检查一次窗口是否存在 ----
         check_window_timer_ += delta_seconds;
-        if (check_window_timer_ < WC_CHECK_TIMER)
+        if (check_window_timer_ >= WC_CHECK_TIMER)
         {
-            return;
+            check_window_timer_ = 0.0f;
         }
-
-        // ---- 释放 WGC 实例 ----
-        if (wgc_capture_.IsActive())
-        {
-            wgc_capture_.Shutdown();
-        }
-
-        check_window_timer_ = 0.0f;
-
-        // ---- 注意：此实现中 window_ 由外部传入，不自动查找 ----
-        // 如果需要自动查找窗口，调用方应在窗口重新出现后调用 Init()
         return;
     }
 
@@ -307,18 +294,9 @@ void WindowCapture::Tick(float delta_seconds)
 
         // ---- 前台进程 != 目标进程 → 隐藏光标 ----
         bool cursor_hidden = foreground_pid && target_pid && foreground_pid != target_pid;
-        dc_capture_.SetCursorHidden(cursor_hidden);
-
-        // ---- WGC 路线动态切换光标 ----
-        if (wgc_capture_.IsActive())
+        if (backend_)
         {
-            if (!wgc_capture_.ShowCursor(!cursor_hidden))
-            {
-                // ---- ShowCursor 失败 → 需要重置 ----
-                ForceReset();
-                hooked_ = false;
-                return;
-            }
+            backend_->SetCursorHidden(cursor_hidden);
         }
 
         cursor_check_time_ = 0.0f;
@@ -329,63 +307,66 @@ void WindowCapture::Tick(float delta_seconds)
     GetWindowClass(window_, class_name, _countof(class_name));
 
     WindowCaptureMethod chosen = ChooseMethod(class_name);
+    DisplayCaptureMethod target = (chosen == WindowCaptureMethod::Wgc)
+                                      ? DisplayCaptureMethod::Wgc
+                                      : DisplayCaptureMethod::Gdi;
 
-    // ========== BitBlt 路线 ==========
-    if (chosen == WindowCaptureMethod::BitBlt)
+    // ---- 路线切换或首次创建后端 ----
+    if (!backend_ || backend_->Kind() != target)
     {
-        // ---- 释放可能存在的 WGC 实例 ----
-        if (wgc_capture_.IsActive())
-        {
-            wgc_capture_.Shutdown();
-        }
+        backend_ = CreateCaptureBackend(target);
+        previously_failed_ = false;
+    }
 
+    // ---- 统一初始化上下文 ----
+    BackendContext ctx;
+    ctx.device = device_;
+    ctx.window = window_;
+    ctx.client_area = client_area_;
+    ctx.capture_cursor = cursor_;
+    ctx.force_sdr = force_sdr_;
+
+    if (target == DisplayCaptureMethod::Gdi)
+    {
         // ---- 设置 DPI 感知上下文，确保 GetClientRect 返回正确尺寸 ----
         DPI_AWARENESS_CONTEXT previous = nullptr;
         if (get_window_dpi_awareness_context_)
         {
-            DPI_AWARENESS_CONTEXT ctx = get_window_dpi_awareness_context_(window_);
-            previous = set_thread_dpi_awareness_context_(ctx);
+            DPI_AWARENESS_CONTEXT dpi_ctx = get_window_dpi_awareness_context_(window_);
+            previous = set_thread_dpi_awareness_context_(dpi_ctx);
         }
 
+        RECT rect;
         GetClientRect(window_, &rect);
+        ctx.rect = rect;
 
-        // ---- 检测窗口尺寸是否变化（每 0.2 秒检测一次） ----
-        if (!reset_capture)
+        // ---- 尺寸变化检测（每 0.2 秒） ----
+        bool reset_capture = false;
+        resize_timer_ += delta_seconds;
+        if (resize_timer_ >= RESIZE_CHECK_TIME)
         {
-            resize_timer_ += delta_seconds;
-
-            if (resize_timer_ >= RESIZE_CHECK_TIME)
+            if ((rect.bottom - rect.top) != (last_rect_.bottom - last_rect_.top) ||
+                (rect.right - rect.left) != (last_rect_.right - last_rect_.left))
             {
-                if ((rect.bottom - rect.top) != (last_rect_.bottom - last_rect_.top) ||
-                    (rect.right - rect.left) != (last_rect_.right - last_rect_.left))
-                {
-                    reset_capture = true;
-                }
-
-                resize_timer_ = 0.0f;
+                reset_capture = true;
             }
+            resize_timer_ = 0.0f;
         }
 
-        // ---- 尺寸变化或首次 → 重新初始化 DcCapture ----
-        if (reset_capture)
+        // ---- 尺寸变化或尚未就绪 → 重建 GDI 后端 ----
+        if (reset_capture || !backend_->IsActive())
         {
-            resize_timer_ = 0.0f;
             last_rect_ = rect;
-
-            uint32_t w = rect.right - rect.left;
-            uint32_t h = rect.bottom - rect.top;
-
-            dc_capture_.Free();
-            dc_capture_.Init(0, 0, w, h, cursor_);
-
-            if (!hooked_ && dc_capture_.IsValid())
+            backend_->Shutdown();
+            backend_->Init(ctx);
+            if (!hooked_ && backend_->IsActive())
             {
                 hooked_ = true;
             }
         }
 
-        // ---- 执行 BitBlt 采集 ----
-        dc_capture_.Capture(window_);
+        // ---- 执行 BitBlt 采集（在 DPI 上下文内） ----
+        backend_->AcquireFrame();
 
         // ---- 恢复 DPI 感知上下文 ----
         if (previous && set_thread_dpi_awareness_context_)
@@ -393,22 +374,13 @@ void WindowCapture::Tick(float delta_seconds)
             set_thread_dpi_awareness_context_(previous);
         }
     }
-    // ========== WGC 路线 ==========
-    else if (chosen == WindowCaptureMethod::Wgc)
+    else // ========== WGC 路线 ==========
     {
-        // ---- 释放可能存在的 BitBlt 资源 ----
-        if (dc_capture_.IsValid())
-        {
-            dc_capture_.Free();
-        }
-
         // ---- WGC 实例不存在且未失败过 → 尝试初始化 ----
-        if (window_ && !wgc_capture_.IsActive() && !previously_failed_)
+        if (!backend_->IsActive() && !previously_failed_)
         {
-            if (!wgc_capture_.InitWindow(device_, window_, client_area_,
-                                          cursor_, force_sdr_))
+            if (!backend_->Init(ctx))
             {
-                // ---- 初始化失败 → 标记不再重试 ----
                 previously_failed_ = true;
             }
             else
@@ -417,11 +389,8 @@ void WindowCapture::Tick(float delta_seconds)
             }
         }
 
-        // ---- 有活跃实例时检查帧 ----
-        if (wgc_capture_.IsActive())
-        {
-            wgc_capture_.Tick();
-        }
+        // ---- 有活跃实例时泵帧 ----
+        backend_->AcquireFrame();
     }
 }
 
@@ -434,69 +403,34 @@ bool WindowCapture::GetFrame(CaptureFrame& out_frame)
         return false;
     }
 
-    // ---- WGC 路线：返回 GPU 纹理 ----
-    if (wgc_capture_.IsActive())
+    if (!backend_)
     {
-        ID3D11Texture2D* tex = wgc_capture_.GetTexture();
-        if (tex)
-        {
-            out_frame.gpu_texture = tex;
-            out_frame.cpu_data = nullptr;
-            out_frame.width = wgc_capture_.Width();
-            out_frame.height = wgc_capture_.Height();
-            out_frame.rotation = 0;
-            return true;
-        }
         return false;
     }
 
-    // ---- BitBlt 路线：返回 CPU 内存数据 ----
-    const uint8_t* data = nullptr;
-    uint32_t stride = 0;
-    if (dc_capture_.GetFrame(data, stride))
-    {
-        out_frame.gpu_texture = nullptr;
-        out_frame.cpu_data = data;
-        out_frame.cpu_stride = stride;
-        out_frame.width = dc_capture_.Width();
-        out_frame.height = dc_capture_.Height();
-        out_frame.rotation = 0;
-        return true;
-    }
-
-    return false;
+    return backend_->GetFrame(out_frame);
 }
 
 // ========== 查询方法 ==========
 
 uint32_t WindowCapture::Width() const
 {
-    if (!WindowNormal())
+    if (!WindowNormal() || !backend_)
     {
         return 0;
     }
 
-    if (wgc_capture_.IsActive())
-    {
-        return wgc_capture_.Width();
-    }
-
-    return dc_capture_.Width();
+    return backend_->Width();
 }
 
 uint32_t WindowCapture::Height() const
 {
-    if (!WindowNormal())
+    if (!WindowNormal() || !backend_)
     {
         return 0;
     }
 
-    if (wgc_capture_.IsActive())
-    {
-        return wgc_capture_.Height();
-    }
-
-    return dc_capture_.Height();
+    return backend_->Height();
 }
 
 WindowCaptureMethod WindowCapture::Method() const

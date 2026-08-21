@@ -20,6 +20,7 @@ enum class DisplayCaptureMethod                                         // 显�
     Auto,                                                               // 自动选择
     Dxgi,                                                               // DXGI Desktop Duplication
     Wgc,                                                                // Windows Graphics Capture
+    Gdi,                                                                // 无 D3D11 设备时的回退路线
 };
 
 enum class WindowCaptureMethod                                          // 窗口采集方法

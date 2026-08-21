@@ -2,10 +2,14 @@
 #define WINDOWCAPTURE_H
 
 #include "CaptureCommon.h"
-#include "DcCapture.h"
+#include "CaptureBackend.h"
 #include "WgcCapture.h"
 
 #include <cstdint>
+#include <memory>
+
+// ========== 窗口采集器 ==========
+// 持有统一抽象 backend_，按 ChooseMethod 在 GDI / WGC 之间切换，自身不再手写路由。
 
 class WindowCapture
 {
@@ -52,9 +56,8 @@ private:
     bool client_area_{false};                                           // WGC 路线：是否仅采集客户区
     bool force_sdr_{false};                                             // 是否强制 SDR
 
-    // ---- 采集器实例 ----
-    DcCapture dc_capture_;                                              // GDI BitBlt 采集器
-    WgcCapture wgc_capture_;                                            // WGC 采集器
+    // ---- 采集后端（统一抽象） ----
+    std::unique_ptr<CaptureBackend> backend_{nullptr};                  // GDI / WGC 后端（按需切换）
 
     // ---- 状态 ----
     bool hooked_{false};                                                // 是否已成功挂钩

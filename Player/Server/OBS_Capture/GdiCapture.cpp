@@ -1,11 +1,11 @@
-#include "DcCapture.h"
+#include "GdiCapture.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
 // ========== 创建兼容 DC 和 DIB Section ==========
 
-void DcCapture::InitDibSection()
+void GdiCapture::InitDibSection()
 {
     BITMAPINFO bi = {0};
     BITMAPINFOHEADER* bih = &bi.bmiHeader;
@@ -36,33 +36,35 @@ void DcCapture::InitDibSection()
 
 // ========== 构造 / 析构 ==========
 
-DcCapture::DcCapture()
+GdiCapture::GdiCapture()
 {
 }
 
-DcCapture::~DcCapture()
+GdiCapture::~GdiCapture()
 {
-    Free();
+    Shutdown();
 }
 
-// ========== 初始化采集区域 ==========
+// ========== 初始化采集区域（CaptureBackend 接口） ==========
 
-void DcCapture::Init(int x, int y, uint32_t width, uint32_t height, bool capture_cursor)
+bool GdiCapture::Init(const BackendContext& ctx)
 {
-    Free();
+    Shutdown();
 
-    x_ = x;
-    y_ = y;
-    width_ = width;
-    height_ = height;
-    capture_cursor_ = capture_cursor;
+    x_ = ctx.rect.left;
+    y_ = ctx.rect.top;
+    width_ = ctx.rect.right - ctx.rect.left;
+    height_ = ctx.rect.bottom - ctx.rect.top;
+    capture_cursor_ = ctx.capture_cursor;
+    window_ = ctx.window;
 
     InitDibSection();
+    return valid_;
 }
 
-// ========== 释放所有 GDI 资源 ==========
+// ========== 释放所有 GDI 资源（CaptureBackend 接口） ==========
 
-void DcCapture::Free()
+void GdiCapture::Shutdown()
 {
     if (hdc_)
     {
@@ -87,7 +89,7 @@ void DcCapture::Free()
 
 // ========== 在 DC 上叠加光标 ==========
 
-void DcCapture::DrawCursorOnHdc(HDC hdc, HWND window)
+void GdiCapture::DrawCursorOnHdc(HDC hdc)
 {
     if (cursor_hidden_)
     {
@@ -119,9 +121,9 @@ void DcCapture::DrawCursorOnHdc(HDC hdc, HWND window)
         POINT win_pos = {x_, y_};
 
         // ---- 窗口采集需要将客户区坐标转为屏幕坐标 ----
-        if (window)
+        if (window_)
         {
-            ClientToScreen(window, &win_pos);
+            ClientToScreen(window_, &win_pos);
         }
 
         POINT pos;
@@ -137,69 +139,69 @@ void DcCapture::DrawCursorOnHdc(HDC hdc, HWND window)
     DestroyIcon(icon);
 }
 
-// ========== 执行 BitBlt 采集 ==========
+// ========== 执行 BitBlt 采集（CaptureBackend 接口） ==========
 
-void DcCapture::Capture(HWND window)
+bool GdiCapture::AcquireFrame()
 {
     if (!valid_ || !hdc_)
     {
-        return;
+        return false;
     }
 
     // ---- 获取目标 DC（nullptr 表示整个桌面） ----
-    HDC hdc_target = GetDC(window);
+    HDC hdc_target = GetDC(window_);
     if (!hdc_target)
     {
-        return;
+        return false;
     }
 
     BitBlt(hdc_, 0, 0, static_cast<int>(width_), static_cast<int>(height_),
            hdc_target, x_, y_, SRCCOPY);
 
-    ReleaseDC(window, hdc_target);
+    ReleaseDC(window_, hdc_target);
 
     // ---- 采集光标并直接叠加到 DC 上 ----
     if (capture_cursor_)
     {
-        DrawCursorOnHdc(hdc_, window);
+        DrawCursorOnHdc(hdc_);
     }
 
     texture_written_ = true;
+    return true;
 }
 
-// ========== 查询方法 ==========
+// ========== 查询方法（CaptureBackend 接口） ==========
 
-bool DcCapture::IsValid() const
+bool GdiCapture::IsActive() const
 {
     return valid_;
 }
 
-bool DcCapture::HasNewFrame() const
-{
-    return texture_written_;
-}
-
-uint32_t DcCapture::Width() const
+uint32_t GdiCapture::Width() const
 {
     return width_;
 }
 
-uint32_t DcCapture::Height() const
+uint32_t GdiCapture::Height() const
 {
     return height_;
 }
 
-// ========== 获取帧数据 ==========
+// ========== 获取帧数据（CaptureBackend 接口） ==========
 
-bool DcCapture::GetFrame(const uint8_t*& out_data, uint32_t& out_stride)
+bool GdiCapture::GetFrame(CaptureFrame& out)
 {
     if (!valid_ || !texture_written_ || !bits_)
     {
         return false;
     }
 
-    out_data = bits_;
-    out_stride = width_ * 4;                                            // BGRA 每像素 4 字节
+    out.gpu_texture = nullptr;
+    out.cpu_data = bits_;
+    out.cpu_stride = width_ * 4;                                        // BGRA 每像素 4 字节
+    out.width = width_;
+    out.height = height_;
+    out.rotation = 0;
 
     // ---- 读取后标记为已消费，下一帧需要重新 Capture ----
     texture_written_ = false;
@@ -207,9 +209,9 @@ bool DcCapture::GetFrame(const uint8_t*& out_data, uint32_t& out_stride)
     return true;
 }
 
-// ========== 设置光标是否隐藏 ==========
+// ========== 设置光标是否隐藏（CaptureBackend 接口） ==========
 
-void DcCapture::SetCursorHidden(bool hidden)
+void GdiCapture::SetCursorHidden(bool hidden)
 {
     cursor_hidden_ = hidden;
 }
