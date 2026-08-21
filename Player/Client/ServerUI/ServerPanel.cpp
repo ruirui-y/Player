@@ -5,6 +5,7 @@
 #include "ServerPanel.h"
 #include "Server/StreamServer.h"
 #include "Server/OBS_Capture/MonitorCapture.h"
+#include "Client/Core/SignalingClient.h"
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -191,6 +192,9 @@ void ServerPanel::OnStartStop()
 {
     if (server_running_)
     {
+        // 第九阶段：断开信令服务器
+        if (signaling_) { signaling_->StopHeartbeat(); signaling_->DisconnectWebSocket(); }
+
         server_->Stop();
         if (server_thread_.joinable()) server_thread_.join();
         delete server_; server_ = nullptr;
@@ -236,6 +240,14 @@ void ServerPanel::OnStartStop()
         status_timer_->start(500);
 
         server_thread_ = std::thread([this]() { server_->Run(); });
+
+        // 第九阶段：向信令服务器注册设备
+        if (signaling_)
+        {
+            signaling_->RegisterDevice(QSysInfo::machineHostName(),
+                QSysInfo::machineHostName(), dest_ip.c_str());
+            signaling_->StartHeartbeat(QSysInfo::machineHostName(), 30000);
+        }
     }
 }
 
@@ -289,4 +301,9 @@ void ServerPanel::SaveSettings()
     settings.setValue("server/dest_ip", dest_ip_edit_->text().trimmed());
     settings.setValue("server/monitor", monitor_combo_->currentIndex());
     settings.setValue("server/fast_encoder", fast_radio_->isChecked());
+}
+
+void ServerPanel::SetSignalingClient(SignalingClient* client)
+{
+    signaling_ = client;
 }

@@ -22,6 +22,8 @@ public:
 
     void Init();                                                                // 创建 MainWindow → 显示
 
+    SignalingClient* GetSignalingClient() const { return signaling_; }           // 第九阶段
+
     // ---- 引擎管理（由 MainWindow 页面调用） ----
     void StartPlayer(const QString& path = QString());                          // 播放器模式：创建 FFmpegPlayer + 绑定 PlayerPage
     void StartStream(uint16_t port, uint16_t ctrl_port, int fps);               // 控制端模式：创建 FFmpegPlayer + 启动串流

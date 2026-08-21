@@ -14,6 +14,7 @@
 #include <cstdint>
 
 class StreamServer;
+class SignalingClient;
 
 // 被控端控制面板
 // UI 线程：显示配置 + 启动/停止 + 状态监控
@@ -25,6 +26,8 @@ class ServerPanel : public QWidget
 public:
     explicit ServerPanel(QWidget* parent = nullptr);
     ~ServerPanel();
+
+    void SetSignalingClient(SignalingClient* client);   // 第九阶段：接入信令服务器
 
 signals:
     void SigBack();                     // 返回启动页
@@ -59,6 +62,7 @@ private:
 
     // 核心对象
     StreamServer* server_{nullptr};
+    SignalingClient* signaling_{nullptr};   // 第九阶段
     std::thread   server_thread_;
     bool          server_running_{false};
 

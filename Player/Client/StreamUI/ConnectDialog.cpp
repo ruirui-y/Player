@@ -1,9 +1,13 @@
 ﻿#include "ConnectDialog.h"
+#include "Client/Core/SignalingClient.h"
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QSettings>
+#include <QJsonArray>
 #include <QMenu>
 #include <QDebug>
+#include <QSysInfo>
+#include <QColor>
 
 ConnectDialog::ConnectDialog(QWidget* parent)
     : QWidget(parent)
@@ -210,4 +214,47 @@ void ConnectDialog::OnRecentContextMenu(const QPoint& pos)
         list.removeAll(data);
         settings.setValue("recent_connections", list);
     }
+}
+
+void ConnectDialog::SetSignalingClient(SignalingClient* client)
+{
+    signaling_ = client;
+    if (!client) return;
+
+    // 打开页面时自动查询设备列表 → 显示在最近连接区域
+    QString my_id = QSysInfo::machineHostName();
+
+    client->OnDeviceList = [this, my_id](const QJsonArray& devices) {
+        qDebug() << "[ConnectDialog] 设备列表刷新:" << devices.size() << "个设备";
+        recent_list_->clear();
+        for (const auto& d : devices)
+        {
+            auto obj = d.toObject();
+            bool online = obj["online"].toBool();
+            QString name = obj["name"].toString();
+            QString id   = obj["id"].toString();
+            bool is_me   = (id == my_id);
+
+            QString marker = is_me ? "★" : (online ? "●" : "○");
+            QString text   = is_me
+                ? QString(u8"%1 %2 (本机)").arg(marker).arg(name)
+                : QString(u8"%1 %2").arg(marker).arg(name);
+            qDebug() << "[ConnectDialog] 设备:" << text << id << online;
+
+            auto* item = new QListWidgetItem(text);
+            item->setData(Qt::UserRole, id);
+            if (is_me)
+                item->setForeground(QColor(255, 200, 50));   // 金色高亮本机
+            else if (!online)
+                item->setForeground(QColor(100, 100, 100));  // 灰色离线
+            recent_list_->addItem(item);
+        }
+    };
+    client->QueryDevices();
+
+    // 设备上线/离线时自动刷新
+    client->OnDeviceStatus = [this](const QString& id, bool online) {
+        qDebug() << "[ConnectDialog] 设备状态变化:" << id << (online ? "上线" : "离线");
+        if (signaling_) signaling_->QueryDevices();
+    };
 }

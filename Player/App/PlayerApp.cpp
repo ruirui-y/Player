@@ -6,9 +6,9 @@
 #include "Client/MainUI/FileBrowser.h"
 #include "Client/StreamUI/StreamWindow.h"
 #include "Client/StreamUI/StreamVideoWidget.h"
+#include "Client/ServerUI/ServerPanel.h"
 #include "Client/Core/FFmpegPlayer.h"
 #include "Client/Core/SignalingClient.h"
-
 #include <QApplication>
 #include <QFile>
 #include <QSysInfo>
@@ -62,7 +62,6 @@ void PlayerApp::Init()
     signaling_->RegisterDevice(device_id, device_id);
     signaling_->StartHeartbeat(device_id, 30000);
     signaling_->QueryDevices();
-    signaling_->StartHeartbeat("player_test", 30000);
 }
 
 void PlayerApp::LoadStyle()

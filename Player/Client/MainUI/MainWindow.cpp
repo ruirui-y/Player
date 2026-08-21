@@ -155,6 +155,9 @@ void MainWindow::SwitchToController()
                      this, &MainWindow::OnConnect);
     QObject::connect(connect_dialog_, &ConnectDialog::SigBack,
                      this, &MainWindow::SwitchToLaunch);
+
+    // 第九阶段：传入信令客户端（显示在线设备列表）
+    connect_dialog_->SetSignalingClient(app_->GetSignalingClient());
 }
 
 void MainWindow::SwitchToServer()
@@ -168,6 +171,9 @@ void MainWindow::SwitchToServer()
 
     QObject::connect(server_panel_, &ServerPanel::SigBack,
                      this, &MainWindow::SwitchToLaunch);
+
+    // 第九阶段：传入信令客户端
+    server_panel_->SetSignalingClient(app_->GetSignalingClient());
 }
 
 void MainWindow::SwitchToStream(StreamWindow* sw)

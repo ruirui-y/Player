@@ -9,6 +9,9 @@
 #include <QLabel>
 #include <cstdint>
 
+class SignalingClient;
+class QJsonArray;
+
 // 控制端连接对话框
 // 输入被控端 IP + 端口 + 帧率，支持最近连接列表
 class ConnectDialog : public QWidget
@@ -17,6 +20,7 @@ class ConnectDialog : public QWidget
 
 public:
     explicit ConnectDialog(QWidget* parent = nullptr);
+    void SetSignalingClient(SignalingClient* client);       // 第九阶段
 
 signals:
     // 用户点击"连接"
@@ -39,6 +43,7 @@ private:
     QListWidget* recent_list_;
     QPushButton* connect_btn_;
     QPushButton* back_btn_;
+    SignalingClient* signaling_{nullptr};   // 第九阶段
 };
 
 #endif // CONNECTDIALOG_H
