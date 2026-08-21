@@ -1,5 +1,7 @@
-#include "WsSession.h"
+﻿#include "WsSession.h"
 #include "WsSessionManager.h"
+#include "Thread/WorkerThread.h"
+#include "DB/SqlExec.h"
 #include "Global/LogManager.h"
 #include <boost/json.hpp>
 
@@ -44,9 +46,21 @@ void WsSession::DoRead()
             if (!self->device_id.empty())
             {
                 LOG_INFO("ws", "[WsSession] 设备离线: {}", self->device_id);
+
+                // 更新数据库状态为离线
+                auto* sql = GetCurrentThreadSqlExec();
+                if (sql)
+                {
+                    char update[128];
+                    snprintf(update, sizeof(update),
+                        "UPDATE devices SET status=0 WHERE id='%s';",
+                        self->device_id.c_str());
+                    sql->Execute(update);
+                }
+
+                WsSessionManager::Get().Remove(self->device_id);
                 WsSessionManager::Get().Broadcast(
                     R"({"type":"device_offline","id":")" + self->device_id + R"("})");
-                WsSessionManager::Get().Remove(self->device_id);
             }
             return;
         }
@@ -76,6 +90,17 @@ void WsSession::OnMessage(const std::string& msg)
                                         obj["device_id"].as_string().size());
                 WsSessionManager::Get().Register(device_id, this);
                 LOG_INFO("ws", "[WsSession] 设备上线: {}", device_id);
+
+                // 更新数据库状态（WS可能比HTTP register先到）
+                auto* sql = GetCurrentThreadSqlExec();
+                if (sql)
+                {
+                    char update[256];
+                    snprintf(update, sizeof(update),
+                        "UPDATE devices SET status=1, last_seen=strftime('%%s','now') WHERE id='%s';",
+                        device_id.c_str());
+                    sql->Execute(update);
+                }
 
                 // 广播上线通知
                 WsSessionManager::Get().Broadcast(
