@@ -32,8 +32,8 @@ public:
     uint32_t Height() const;                                                            // 帧高度（考虑旋转）
     DisplayCaptureMethod Method() const;                                                // 当前实际生效的采集方法
     bool IsActive() const;                                                              // 是否正在采集
-    int MonitorX() const { return backend_ ? backend_->MonitorX() : 0; }                // 显示器屏幕 X 偏移（光标合成用）
-    int MonitorY() const { return backend_ ? backend_->MonitorY() : 0; }                // 显示器屏幕 Y 偏移（光标合成用）
+    int MonitorX() const { return rect_.left; }                                         // 显示器屏幕 X 偏移（WGC/DXGI/GDI 通用）
+    int MonitorY() const { return rect_.top; }                                          // 显示器屏幕 Y 偏移（WGC/DXGI/GDI 通用）
 
     // 静态方法：枚举所有显示器
     static std::vector<MonitorInfo> EnumerateMonitors();

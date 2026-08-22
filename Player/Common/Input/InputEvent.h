@@ -6,7 +6,7 @@
 // ========== 服务器显示器信息（TCP 连接建立后服务端发送给客户端） ==========
 // 客户端用于将视频窗口内的光标位置正确映射到服务器虚拟桌面上的绝对坐标
 // 单显示器场景：capture = virtual, monitor_x/y = 0，公式退化为简单归一化
-// 多显示器场景：客户端坐标 → 捕获分辨率 → 加上偏移 → 映射到虚拟桌面
+// 多显示器场景：客户端坐标 → 捕获分辨率 → 加上显示器偏移 → 减虚拟桌面原点 → 映射到虚拟桌面
 #pragma pack(push, 1)
 struct ServerMonitorInfo
 {
@@ -14,12 +14,15 @@ struct ServerMonitorInfo
     uint16_t capture_height;                                            // 捕获的显示器分辨率高度
     int16_t  monitor_x;                                                 // 显示器在虚拟桌面中的 X 偏移
     int16_t  monitor_y;                                                 // 显示器在虚拟桌面中的 Y 偏移
+    int16_t  virtual_x;                                                 // 虚拟桌面原点 X（SM_XVIRTUALSCREEN，可能为负）
+    int16_t  virtual_y;                                                 // 虚拟桌面原点 Y（SM_YVIRTUALSCREEN，可能为负）
     uint32_t virtual_width;                                             // 虚拟桌面总宽度（所有显示器拼接）
     uint32_t virtual_height;                                            // 虚拟桌面总高度
+    uint8_t  capture_method;                                            // 服务端采集方法（DisplayCaptureMethod 的数值，Dxgi/Wgc/Gdi/Auto）
 };
 #pragma pack(pop)
 
-static_assert(sizeof(ServerMonitorInfo) == 16, "ServerMonitorInfo 必须为 16 字节");
+static_assert(sizeof(ServerMonitorInfo) == 21, "ServerMonitorInfo 必须为 21 字节");
 
 // ========== 输入事件类型 ==========
 enum class InputEventType : uint8_t

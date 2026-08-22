@@ -440,7 +440,8 @@ bool MonitorCapture::Capture(CaptureFrame& out_frame)
     }
 
     showing_ = true;
-    return backend_->GetFrame(out_frame);
+    bool ok = backend_->GetFrame(out_frame);
+    return ok;
 }
 
 // ========== 获取光标信息 ==========

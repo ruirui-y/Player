@@ -1,4 +1,5 @@
 ﻿#include "InputCollector.h"
+#include "Common/LogManager.h"
 
 #include <QDebug>
 #include <vector>
@@ -90,10 +91,13 @@ void InputCollector::SetMonitorInfo(const ServerMonitorInfo& info)
 {
     monitor_info_ = info;
     has_monitor_info_ = true;
-    qDebug() << "[InputCollector] 接收显示器信息: capture=%dx%d  offset=(%d,%d)  virtual=%dx%d",
-        info.capture_width, info.capture_height,
+    LogManager::Log("INFO", "[InputCollector] 接收显示器信息: capture=%ux%u offset=(%d,%d) virtual_origin=(%d,%d) virtual=%ux%u",
+        static_cast<unsigned>(info.capture_width),
+        static_cast<unsigned>(info.capture_height),
         info.monitor_x, info.monitor_y,
-        info.virtual_width, info.virtual_height;
+        info.virtual_x, info.virtual_y,
+        static_cast<unsigned>(info.virtual_width),
+        static_cast<unsigned>(info.virtual_height));
 }
 
 // 派发事件到回调
@@ -115,9 +119,9 @@ void InputCollector::DispatchEvent(const InputMessage& msg)
 //   2. 加上显示器在虚拟桌面中的偏移
 //      server_x += monitor_x
 //      server_y += monitor_y
-//   3. 归一化到 0-65535（基于虚拟桌面尺寸）
-//      out_x = (server_x / virtual_w) * 65535
-//      out_y = (server_y / virtual_h) * 65535
+//   3. 减去虚拟桌面原点后，归一化到 0-65535（基于虚拟桌面尺寸）
+//      out_x = ((server_x - virtual_x) / virtual_w) * 65535
+//      out_y = ((server_y - virtual_y) / virtual_h) * 65535
 //
 // 为什么是这个方案：
 //   MOUSEEVENTF_ABSOLUTE | VIRTUALDESK 把 0-65535 映射到整个虚拟桌面，
@@ -164,26 +168,37 @@ bool InputCollector::GetCursorAbsPos(uint16_t& out_x, uint16_t& out_y)
     if (pt.y >= height) pt.y = height - 1;
 
     // ---- 第六步：归一化到 0-65535（Windows MOUSEEVENTF_ABSOLUTE 坐标系） ----
-    // 有多显示器信息时：窗口坐标 → 捕获分辨率 → 加偏移 → 虚拟桌面归一化
+    // 有多显示器信息时：窗口坐标 → 捕获分辨率 → 加偏移 → 减虚拟桌面原点 → 虚拟桌面归一化
     // 无显示器信息时：回退到简单归一化（单显示器场景）
     if (has_monitor_info_)
     {
         float cap_w = static_cast<float>(monitor_info_.capture_width);
         float cap_h = static_cast<float>(monitor_info_.capture_height);
-        float virt_w = static_cast<float>(monitor_info_.virtual_width);
-        float virt_h = static_cast<float>(monitor_info_.virtual_height);
+        double virt_w = static_cast<double>(monitor_info_.virtual_width);
+        double virt_h = static_cast<double>(monitor_info_.virtual_height);
+        if (virt_w <= 1.0 || virt_h <= 1.0)
+            return false;
 
         // 客户端窗口坐标 → 服务器捕获分辨率坐标
-        float server_x = static_cast<float>(pt.x) / width * cap_w;
-        float server_y = static_cast<float>(pt.y) / height * cap_h;
+        double server_x = static_cast<double>(pt.x) / width * cap_w;
+        double server_y = static_cast<double>(pt.y) / height * cap_h;
 
         // 加上显示器在虚拟桌面中的偏移
-        server_x += static_cast<float>(monitor_info_.monitor_x);
-        server_y += static_cast<float>(monitor_info_.monitor_y);
+        server_x += static_cast<double>(monitor_info_.monitor_x);
+        server_y += static_cast<double>(monitor_info_.monitor_y);
+
+        // MOUSEEVENTF_VIRTUALDESK 的 0 点是整个虚拟桌面的左上角，不一定是 (0,0)。
+        server_x -= static_cast<double>(monitor_info_.virtual_x);
+        server_y -= static_cast<double>(monitor_info_.virtual_y);
+
+        if (server_x < 0.0) server_x = 0.0;
+        if (server_y < 0.0) server_y = 0.0;
+        if (server_x > virt_w - 1.0) server_x = virt_w - 1.0;
+        if (server_y > virt_h - 1.0) server_y = virt_h - 1.0;
 
         // 归一化到 0-65535（基于虚拟桌面尺寸）
-        out_x = static_cast<uint16_t>(server_x / virt_w * 65535.0f);
-        out_y = static_cast<uint16_t>(server_y / virt_h * 65535.0f);
+        out_x = static_cast<uint16_t>(server_x / (virt_w - 1.0) * 65535.0);
+        out_y = static_cast<uint16_t>(server_y / (virt_h - 1.0) * 65535.0);
     }
     else
     {

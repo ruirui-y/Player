@@ -93,10 +93,13 @@ bool InputTransportClient::Connect(const char* server_ip, uint16_t port)
         return false;
     }
 
-    qDebug() << "[InputClient] 显示器信息: capture=%dx%d  offset=(%d,%d)  virtual=%dx%d",
-        monitor_info_.capture_width, monitor_info_.capture_height,
+    qDebug("[InputClient] 显示器信息: capture=%ux%u offset=(%d,%d) virtual_origin=(%d,%d) virtual=%ux%u",
+        static_cast<unsigned>(monitor_info_.capture_width),
+        static_cast<unsigned>(monitor_info_.capture_height),
         monitor_info_.monitor_x, monitor_info_.monitor_y,
-        monitor_info_.virtual_width, monitor_info_.virtual_height;
+        monitor_info_.virtual_x, monitor_info_.virtual_y,
+        static_cast<unsigned>(monitor_info_.virtual_width),
+        static_cast<unsigned>(monitor_info_.virtual_height));
 
     // ---- 第六阶段新增：启动服务端消息接收线程 ----
     if (msg_handler_)
@@ -404,10 +407,13 @@ void InputTransportServer::AcceptLoop()
                 client_sock_ = INVALID_SOCKET;
                 continue;
             }
-            qDebug() << "[InputServer] 已发送显示器信息: capture=%dx%d  offset=(%d,%d)  virtual=%dx%d",
-                monitor_info_.capture_width, monitor_info_.capture_height,
+            qDebug("[InputServer] 已发送显示器信息: capture=%ux%u offset=(%d,%d) virtual_origin=(%d,%d) virtual=%ux%u",
+                static_cast<unsigned>(monitor_info_.capture_width),
+                static_cast<unsigned>(monitor_info_.capture_height),
                 monitor_info_.monitor_x, monitor_info_.monitor_y,
-                monitor_info_.virtual_width, monitor_info_.virtual_height;
+                monitor_info_.virtual_x, monitor_info_.virtual_y,
+                static_cast<unsigned>(monitor_info_.virtual_width),
+                static_cast<unsigned>(monitor_info_.virtual_height));
         }
 
         ReceiveLoop(new_sock);

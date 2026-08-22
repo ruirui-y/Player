@@ -11,6 +11,7 @@ class InputCollector;
 class InputTransportClient;
 class FFmpegPlayer;
 class QLabel;
+struct ServerMonitorInfo;
 
 // 串流模式主窗口
 // 与播放器的 MainWindow 完全独立，不含 ControlBar / FileBrowser / SeekBar
@@ -47,6 +48,11 @@ public:
 
     // 获取控制信道客户端（IDR 请求等扩展功能用）
     InputTransportClient* GetInputTransport() const { return input_transport_; }
+
+    // 根据服务端采集方法决定是否隐藏客户端原生光标
+    // Dxgi：服务端帧不含光标，不隐藏（光标由服务端补画或客户端另行绘制）
+    // 其余（Wgc/Gdi/Auto）：服务端帧已含光标，隐藏客户端原生光标避免重影
+    void ApplyCursorVisibility(const ServerMonitorInfo& info);
 
 signals:
     void SigRequestClose();                                                 // 请求关闭

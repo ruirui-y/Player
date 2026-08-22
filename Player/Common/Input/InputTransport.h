@@ -49,7 +49,7 @@ public:
     bool IsConnected() const { return sock_ != INVALID_SOCKET; }                            // 是否已连接
 
     // 获取服务端发送的显示器信息（Connect 成功后调用）
-    const ServerMonitorInfo& GetMonitorInfo() const { return monitor_info_; }               // 获取显示器信息
+    const ServerMonitorInfo& GetServerMonitorInfo() const { return monitor_info_; }        // 获取显示器信息（避开 windows.h 的 GetMonitorInfo 宏）
 
     // 设置服务端消息处理回调（接收线程中调用，需自行保证线程安全）
     void SetMessageHandler(std::function<void(uint8_t msg_type,

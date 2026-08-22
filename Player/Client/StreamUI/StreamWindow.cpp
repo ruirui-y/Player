@@ -9,6 +9,7 @@
 #include "Common/Input/InputTransport.h"
 #include "Common/Input/InputEvent.h"
 #include "Common/LogManager.h"
+#include "Server/OBS_Capture/CaptureCommon.h"            // DisplayCaptureMethod 枚举
 
 #include <QVBoxLayout>
 #include <QTimer>
@@ -198,17 +199,24 @@ bool StreamWindow::StartInput(const char* server_ip, uint16_t ctrl_port)
     // ---- 第二步：创建输入采集器 ----
     input_collector_ = new InputCollector();
 
-    // ---- 第三步：接收服务端显示器信息，传给采集器（多显示器坐标映射） ----
-    input_collector_->SetMonitorInfo(input_transport_->GetMonitorInfo());
+    // ---- 第三步：传递视频窗口 HWND 给采集器，用于绝对坐标映射 ----
+    input_collector_->SetVideoWidget(video_widget_->GetVideoHwnd());
 
-    // ---- 第四步：设置采集回调 → TCP 发送 ----
+    // ---- 第四步：接收服务端显示器信息，传给采集器（多显示器坐标映射） ----
+    ServerMonitorInfo monitor_info = input_transport_->GetServerMonitorInfo();
+    input_collector_->SetMonitorInfo(monitor_info);
+
+    // ---- 第四步B：根据服务端采集方法决定是否隐藏客户端原生光标 ----
+    ApplyCursorVisibility(monitor_info);
+
+    // ---- 第五步：设置采集回调 → TCP 发送 ----
     input_collector_->OnInputEvent = [this](const InputMessage& msg)
     {
         if (input_transport_)
             input_transport_->Send(msg);
     };
 
-    // ---- 第五步：启动采集（钩子需要消息循环，Qt 事件循环即可） ----
+    // ---- 第六步：启动采集（钩子需要消息循环，Qt 事件循环即可） ----
     if (!input_collector_->Start())
     {
         LogManager::Log("ERR", "[StreamWindow] 输入采集启动失败");
@@ -222,11 +230,25 @@ bool StreamWindow::StartInput(const char* server_ip, uint16_t ctrl_port)
     SetStatusText(QString(u8"已连接  控制信道 %1:%2").arg(server_ip).arg(ctrl_port));
     LogManager::Log("INFO", "[StreamWindow] 输入转发已启动");
 
-    // ---- 第六步：传递视频窗口 HWND 给采集器，用于绝对坐标映射 ----
-    // 采集器根据光标在视频窗口内的位置，结合 ServerMonitorInfo 做多显示器映射
-    input_collector_->SetVideoWidget(video_widget_->GetVideoHwnd());
-
     return true;
+}
+
+// ---- 根据服务端采集方法决定是否隐藏客户端原生光标 ----
+void StreamWindow::ApplyCursorVisibility(const ServerMonitorInfo& info)
+{
+    // Dxgi：服务端帧不含光标，不隐藏客户端原生光标（光标由服务端补画或另行绘制）
+    // 其余（Wgc/Gdi/Auto）：服务端帧已含光标，隐藏原生光标避免重影
+    if (info.capture_method == static_cast<uint8_t>(DisplayCaptureMethod::Dxgi))
+    {
+        setCursor(Qt::ArrowCursor);                       // 恢复显示原生光标
+        LogManager::Log("INFO", "[StreamWindow] 采集方法=Dxgi，不隐藏客户端光标");
+    }
+    else
+    {
+        setCursor(Qt::BlankCursor);                       // 隐藏原生光标
+        LogManager::Log("INFO", "[StreamWindow] 采集方法=%d，隐藏客户端光标（服务端帧已含光标）",
+                        static_cast<int>(info.capture_method));
+    }
 }
 
 // ---- 停止输入转发 ----
