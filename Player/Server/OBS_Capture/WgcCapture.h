@@ -96,6 +96,9 @@ private:
     uint32_t width_{0};                                                                         // 帧宽度
     uint32_t height_{0};                                                                        // 帧高度
 
+    bool first_frame_diagnostic_logged_{false};                                                  // 是否已输出首帧成功诊断
+    bool first_frame_error_logged_{false};                                                       // 是否已输出首帧错误诊断
+
     // ---- 事件回调对象 ----
     Microsoft::WRL::ComPtr<IUnknown> frame_arrived_handler_;                                    // FrameArrived 回调包装
 };

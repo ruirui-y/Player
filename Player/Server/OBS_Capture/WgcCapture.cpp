@@ -1,4 +1,4 @@
-#include "WgcCapture.h"
+﻿#include "WgcCapture.h"
 
 #include "Common/LogManager.h"
 
@@ -11,7 +11,7 @@
 #include <windows.graphics.directx.direct3d11.interop.h>   // 声明 CreateDirect3D11DeviceFromDXGIDevice
 
 #pragma comment(lib, "runtimeobject.lib")
-#pragma comment(lib, "windows.graphics.directx.direct3d11.lib")   // 链接导入库，禁止 LoadLibrary 按 API 集名加载（会 126）
+#pragma comment(lib, "WindowsApp.lib")   // CreateDirect3D11DeviceFromDXGIDevice 的 SDK 导入库
 
 // ========== 辅助：HSTRING 管理 ==========
 
@@ -156,9 +156,7 @@ bool WgcCapture::CreateDirect3DDeviceFromD3D11(ID3D11Device* d3d11_device)
     }
 
     // ---- 直接调用 CreateDirect3D11DeviceFromDXGIDevice ----
-    // 注意：该函数在 windows.graphics.directx.direct3d11.dll 中，但它是 Win32 API 集，
-    // 不能用 LoadLibrary 按文件名运行时加载（会 126 ERROR_MOD_NOT_FOUND）。
-    // 正确做法是链接 SDK 导入库 windows.graphics.directx.direct3d11.lib（见文件顶部 pragma）。
+    // 该 Win32 API 的 SDK 导入库是 WindowsApp.lib（见文件顶部 pragma）。
     IInspectable* inspectable = nullptr;
     hr = CreateDirect3D11DeviceFromDXGIDevice(dxgi_device_, &inspectable);
 
@@ -254,30 +252,35 @@ bool WgcCapture::StartCapture()
     width_ = static_cast<uint32_t>(size.Width);
     height_ = static_cast<uint32_t>(size.Height);
 
-    // ---- 获取 Direct3D11CaptureFramePool 静态工厂 ----
+    // ---- 获取 Direct3D11CaptureFramePool FreeThreaded 静态工厂 ----
     ScopedHString pool_class_id(RuntimeClass_Windows_Graphics_Capture_Direct3D11CaptureFramePool);
-    ABI::Windows::Graphics::Capture::IDirect3D11CaptureFramePoolStatics* pool_stats = nullptr;
+    ABI::Windows::Graphics::Capture::IDirect3D11CaptureFramePoolStatics2* pool_stats = nullptr;
 
     HRESULT hr = RoGetActivationFactory(pool_class_id.Get(),
-                                         __uuidof(ABI::Windows::Graphics::Capture::IDirect3D11CaptureFramePoolStatics),
+                                         __uuidof(ABI::Windows::Graphics::Capture::IDirect3D11CaptureFramePoolStatics2),
                                          reinterpret_cast<void**>(&pool_stats));
     if (FAILED(hr) || !pool_stats)
     {
-        LogManager::Log("ERR", "[WgcCapture] StartCapture: RoGetActivationFactory(FramePool) 失败 hr=0x%08X", (unsigned)hr);
+        LogManager::Log("ERR", "[WgcCapture] StartCapture: 获取 FreeThreaded FramePool 工厂失败 hr=0x%08X",
+                        (unsigned)hr);
         return false;
     }
 
-    // ---- 创建 FramePool（2 个缓冲区，BGRA 格式） ----
-    hr = pool_stats->Create(direct3d_device_,
-                             ABI::Windows::Graphics::DirectX::DirectXPixelFormat_B8G8R8A8UIntNormalized,
-                             2,
-                             size,
-                             &frame_pool_);
+    // ---- 创建 FreeThreaded FramePool（2 个缓冲区，BGRA 格式） ----
+    // CreateFreeThreaded 不依赖创建线程的 DispatcherQueue，FrameArrived
+    // 会由 WGC 内部线程触发，因此不会被 UI 线程的首帧等待阻塞。
+    hr = pool_stats->CreateFreeThreaded(
+        direct3d_device_,
+        ABI::Windows::Graphics::DirectX::DirectXPixelFormat_B8G8R8A8UIntNormalized,
+        2,
+        size,
+        &frame_pool_);
     pool_stats->Release();
 
     if (FAILED(hr) || !frame_pool_)
     {
-        LogManager::Log("ERR", "[WgcCapture] StartCapture: FramePool::Create 失败 hr=0x%08X", (unsigned)hr);
+        LogManager::Log("ERR", "[WgcCapture] StartCapture: FramePool::CreateFreeThreaded 失败 hr=0x%08X",
+                        (unsigned)hr);
         return false;
     }
 
@@ -329,6 +332,9 @@ bool WgcCapture::StartCapture()
     }
 
     active_ = true;
+    // 先主动探测一次首帧，避免首个 FrameArrived 事件在初始化等待期间错过。
+    // 后续帧仍由 FreeThreaded FramePool 的回调设置 new_frame_arrived_。
+    new_frame_arrived_.store(true);
     return true;
 }
 
@@ -465,15 +471,24 @@ void WgcCapture::Shutdown()
     active_ = false;
     new_frame_arrived_ = false;
     closed_ = false;
+    first_frame_diagnostic_logged_ = false;
+    first_frame_error_logged_ = false;
 }
 
 // ========== 采集一帧（CaptureBackend 接口） ==========
 
 bool WgcCapture::AcquireFrame()
 {
-    // ---- WGC 为推模式：泵一下内部 Tick，只要 backend 仍活跃即返回 true ----
-    // ---- 区分于 DXGI：Tick 返回 false 仅表示“本帧无新画面”，不代表 backend 死亡 ----
+    if (!IsActive())
+    {
+        return false;
+    }
+
+    // FrameArrived 回调只负责设置标志，必须在采集调用线程中执行 Tick()
+    // 才能真正调用 TryGetNextFrame() 并更新 current_texture_。
     Tick();
+
+    // Tick() 返回 false 只表示这一轮没有新帧，不代表 WGC 后端失效。
     return IsActive();
 }
 
@@ -516,15 +531,15 @@ bool WgcCapture::Tick()
 {
     if (!active_ || closed_.load())
     {
-        // ---- CaptureItem 已关闭 → 采集失效 ----
         if (closed_.load() && active_)
         {
+            LogManager::Log("INFO", "[WgcCapture] Tick: 检测到 CaptureItem 已关闭，采集状态转为失效。");
             active_ = false;
         }
         return false;
     }
 
-    // ---- 没有 FrameArrived 事件 → 无新帧 ----
+    // ---- FrameArrived 由 FreeThreaded FramePool 在线程中触发 ----
     if (!new_frame_arrived_.exchange(false))
     {
         return false;
@@ -535,36 +550,83 @@ bool WgcCapture::Tick()
     HRESULT hr = frame_pool_->TryGetNextFrame(&frame);
     if (FAILED(hr) || !frame)
     {
+        if (!first_frame_error_logged_)
+        {
+            LogManager::Log("WARN", "[WgcCapture] TryGetNextFrame 失败: hr=0x%08X", (unsigned)hr);
+            first_frame_error_logged_ = true;
+        }
         return false;
     }
 
     // ---- 获取帧的 Surface（IDirect3DSurface） ----
     ABI::Windows::Graphics::DirectX::Direct3D11::IDirect3DSurface* surface = nullptr;
     hr = frame->get_Surface(&surface);
+
+    // 注意：frame 在获取 surface 后就可以释放了
     frame->Release();
 
     if (FAILED(hr) || !surface)
     {
+        if (!first_frame_error_logged_)
+        {
+            LogManager::Log("WARN", "[WgcCapture] IDirect3DSurface 获取失败: hr=0x%08X", (unsigned)hr);
+            first_frame_error_logged_ = true;
+        }
         return false;
     }
 
     // ---- 将 IDirect3DSurface 转为 ID3D11Texture2D ----
-    // IDirect3DSurface 实际上就是 ID3D11Texture2D 的包装，通过 QI 获取
+    Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess* dxgi_access = nullptr;
     ID3D11Texture2D* texture = nullptr;
-    hr = surface->QueryInterface(__uuidof(ID3D11Texture2D),
-                                  reinterpret_cast<void**>(&texture));
+    hr = surface->QueryInterface(
+        __uuidof(Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess),
+        reinterpret_cast<void**>(&dxgi_access));
+
+    if (SUCCEEDED(hr) && dxgi_access)
+    {
+        hr = dxgi_access->GetInterface(__uuidof(ID3D11Texture2D),
+            reinterpret_cast<void**>(&texture));
+        dxgi_access->Release();
+    }
+    else
+    {
+        LogManager::Log("WARN", "[WgcCapture] QueryInterface IDirect3DDxgiInterfaceAccess 失败: hr=0x%08X", (unsigned)hr);
+    }
+
     surface->Release();
 
     if (FAILED(hr) || !texture)
     {
+        if (!first_frame_error_logged_)
+        {
+            LogManager::Log("WARN", "[WgcCapture] IDirect3DSurface 转 ID3D11Texture2D 失败: hr=0x%08X",
+                (unsigned)hr);
+            first_frame_error_logged_ = true;
+        }
         return false;
     }
 
     // ---- 更新尺寸 ----
     D3D11_TEXTURE2D_DESC desc;
     texture->GetDesc(&desc);
+
+    // 检测分辨率是否发生变化
+    bool size_changed = (width_ != desc.Width || height_ != desc.Height);
+
     width_ = desc.Width;
     height_ = desc.Height;
+
+    if (!first_frame_diagnostic_logged_)
+    {
+        LogManager::Log("INFO", "[WgcCapture] 首帧纹理获取成功: %ux%u format=%d",
+            desc.Width, desc.Height, static_cast<int>(desc.Format));
+        first_frame_diagnostic_logged_ = true;
+    }
+    else if (size_changed)
+    {
+        // 如果分辨率发生改变（比如窗口拉伸），打印日志
+        LogManager::Log("INFO", "[WgcCapture] 帧分辨率发生变化，更新为: %ux%u", desc.Width, desc.Height);
+    }
 
     // ---- 加锁替换当前帧纹理 ----
     {
