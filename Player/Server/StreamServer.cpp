@@ -29,17 +29,23 @@ StreamServer::StreamServer()
 {
 }
 
-// ---- 析构：逆序释放所有资源 ----
+// ---- 析构 ----
 StreamServer::~StreamServer()
 {
-    Stop();
+    Stop();      // 停主循环 + 停音频线程
+    Shutdown();  // 逆序释放资源（与 Init 失败回滚共用）
+}
 
-    // ---- 第四阶段：先停音频组件（独立线程，需先 join）----
-    if (wasapi_capture_) { wasapi_capture_->Stop(); delete wasapi_capture_; wasapi_capture_ = nullptr; }
+// ---- 逆序释放所有资源（析构与 Init 失败回滚共用）----
+// 约定：Stop() 负责停线程/循环，Shutdown() 只 delete，避免重复 Stop
+void StreamServer::Shutdown()
+{
+    // ---- 第四阶段：音频组件 ----
+    if (wasapi_capture_) { delete wasapi_capture_; wasapi_capture_ = nullptr; }
     if (opus_encoder_)   { delete opus_encoder_;   opus_encoder_   = nullptr; }
-    if (audio_sender_)   { audio_sender_->Close(); delete audio_sender_;   audio_sender_   = nullptr; }
+    if (audio_sender_)   { audio_sender_->Close(); delete audio_sender_; audio_sender_ = nullptr; }
 
-    // ---- 第三阶段：先停输入组件 ----
+    // ---- 第三阶段：输入组件 ----
     if (input_server_)  { input_server_->Stop(); delete input_server_;  input_server_  = nullptr; }
     if (bitrate_ctrl_)  { delete bitrate_ctrl_;  bitrate_ctrl_  = nullptr; }
     if (input_injector_) { delete input_injector_; input_injector_ = nullptr; }
@@ -61,7 +67,41 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
 {
     fps_ = fps;
 
-    // ---- 第一步：创建 D3D11 设备（需要 VIDEO_SUPPORT 给 NVENC 用） ----
+    // ---- 阶段 1：D3D11 设备 ----
+    if (!InitD3D11()) { Shutdown(); return false; }
+
+    // ---- 阶段 2-4：枚举显示器 + 采集器 + 首帧 ----
+    if (!InitCaptureStage(monitor_index)) { Shutdown(); return false; }
+
+    // ---- 阶段 5：编码器 ----
+    if (!InitEncoder(use_fast, bitrate_kbps)) { Shutdown(); return false; }
+
+    // ---- 码率自适应控制器（非失败点，直接构造）----
+    current_bitrate_.store(bitrate_kbps);
+    bitrate_ctrl_ = new BitrateController(bitrate_kbps);
+
+    // ---- 阶段 6：UDP 视频发送器 ----
+    if (!InitSender(dest_ip, port)) { Shutdown(); return false; }
+
+    // ---- 阶段 7：GDI 上传纹理 ----
+    if (!InitUploadTexture()) { Shutdown(); return false; }
+
+    // ---- 阶段 8：TCP 输入控制信道 ----
+    if (!InitInputChannel(ctrl_port)) { Shutdown(); return false; }
+
+    // ---- 阶段 9：音频（非致命）----
+    InitAudio(dest_ip, audio_port);
+
+    LogManager::Log("INFO", "[StreamServer] 初始化完成 -> %s:%d  %dx%d@%dfps  %dbps  ctrl:%d  audio:%d",
+                    dest_ip, port, width_, height_, fps_, bitrate_kbps * 1000, ctrl_port, audio_port);
+    return true;
+}
+
+// ================================================================
+// ---- 阶段 1：创建 D3D11 设备（需要 VIDEO_SUPPORT 给 NVENC 用） ----
+// ================================================================
+bool StreamServer::InitD3D11()
+{
     D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
     HRESULT hr = D3D11CreateDevice(
         nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
@@ -73,8 +113,15 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
         LogManager::Log("ERR", "[StreamServer] D3D11 设备创建失败, HR = 0x%08X", (unsigned)hr);
         return false;
     }
+    return true;
+}
 
-    // ---- 第二步：枚举显示器，取指定索引 ----
+// ================================================================
+// ---- 阶段 2-4：枚举显示器 -> 初始化采集器 -> 等待首帧 ----
+// 成功时填充 width_ / height_ / capture_gpu_，供后续阶段使用
+// ================================================================
+bool StreamServer::InitCaptureStage(int monitor_index)
+{
     auto monitors = MonitorCapture::EnumerateMonitors();
     if (monitors.empty() || monitor_index >= (int)monitors.size())
     {
@@ -90,7 +137,6 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
 
     const char* monitor_id = monitors[monitor_index].device_id;
 
-    // ---- 第三步：初始化采集器 ----
     capture_ = new MonitorCapture();
     if (!capture_->Init(d3d_device_, monitor_id,
                         DisplayCaptureMethod::Auto, true, false))
@@ -99,7 +145,7 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
         return false;
     }
 
-    // ---- 第四步：等首帧到达（最多约 5 秒） ----
+    // ---- 等首帧到达（最多约 5 秒）----
     CaptureFrame frame;
     int wait = 0;
     while (wait < 300)
@@ -109,7 +155,6 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
         ++wait;
         Sleep(16);
     }
-
     if (!frame.IsValid())
     {
         LogManager::Log("ERR", "[StreamServer] 首帧超时");
@@ -118,10 +163,17 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
 
     width_ = static_cast<int>(frame.width);
     height_ = static_cast<int>(frame.height);
+    capture_gpu_ = frame.IsGpu();
     LogManager::Log("INFO", "[StreamServer] 首帧: %dx%d %s",
-                    width_, height_, frame.IsGpu() ? "GPU" : "CPU");
+                    width_, height_, capture_gpu_ ? "GPU" : "CPU");
+    return true;
+}
 
-    // ---- 第五步：初始化编码器（按 use_fast 选择 CPU/GPU 色彩转换路线） ----
+// ================================================================
+// ---- 阶段 5：初始化编码器（按 use_fast 选择 CPU/GPU 色彩转换路线）----
+// ================================================================
+bool StreamServer::InitEncoder(bool use_fast, int bitrate_kbps)
+{
     if (use_fast)
     {
         encoder_ = new ObsNvencEncoderFast();
@@ -132,41 +184,60 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
         encoder_ = new ObsNvencEncoder();
         LogManager::Log("INFO", "[StreamServer] 使用 CPU 软件色彩转换 (ObsNvencEncoder)");
     }
-
     if (!encoder_->Init(d3d_device_, width_, height_, fps_, bitrate_kbps))
     {
         LogManager::Log("ERR", "[StreamServer] 编码器初始化失败");
         return false;
     }
+    return true;
+}
 
-    // ---- 第六阶段：初始化码率自适应控制器 ----
-    current_bitrate_.store(bitrate_kbps);
-    bitrate_ctrl_ = new BitrateController(bitrate_kbps);
-
-    // ---- 第六步：初始化 UDP 发送器 ----
+// ================================================================
+// ---- 阶段 6：初始化 UDP 视频发送器 ----
+// ================================================================
+bool StreamServer::InitSender(const char* dest_ip, uint16_t port)
+{
     sender_ = new VideoSender();
     if (!sender_->Init(dest_ip, port))
     {
         LogManager::Log("ERR", "[StreamServer] VideoSender 初始化失败");
         return false;
     }
+    return true;
+}
 
-    // ---- 第七步：GDI 路线需要创建上传纹理 ----
-    // DXGI/WGC 路线直接给 GPU 纹理，GDI 路线给 CPU 数据需要上传到 GPU
-    if (!frame.IsGpu())
+// ================================================================
+// ---- 阶段 7：GDI 路线创建 CPU->GPU 上传纹理 ----
+// DXGI/WGC 路线直接给 GPU 纹理，无需上传纹理，直接跳过
+// ================================================================
+bool StreamServer::InitUploadTexture()
+{
+    if (capture_gpu_)
+        return true;
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = width_;
+    desc.Height = height_;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    HRESULT hr = d3d_device_->CreateTexture2D(&desc, nullptr, &upload_tex_);
+    if (FAILED(hr))
     {
-        D3D11_TEXTURE2D_DESC desc = {};
-        desc.Width = width_;
-        desc.Height = height_;
-        desc.MipLevels = 1;
-        desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        desc.SampleDesc.Count = 1;
-        desc.Usage = D3D11_USAGE_DEFAULT;
-        d3d_device_->CreateTexture2D(&desc, nullptr, &upload_tex_);
+        LogManager::Log("ERR", "[StreamServer] 上传纹理创建失败, HR = 0x%08X", (unsigned)hr);
+        return false;
     }
+    return true;
+}
 
-    // ---- 第八步：初始化输入控制组件（第三阶段：TCP 控制信道 + SendInput 注入） ----
+// ================================================================
+// ---- 阶段 8：TCP 控制信道（第三阶段）----
+// 监听 + 下发显示器坐标映射信息 + 绑定回调 + 启动
+// ================================================================
+bool StreamServer::InitInputChannel(uint16_t ctrl_port)
+{
     input_injector_ = new InputInjector();
 
     input_server_ = new InputTransportServer();
@@ -177,24 +248,51 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
     }
 
     // ---- 设置显示器信息（客户端需要此信息做正确的多显示器坐标映射） ----
-    {
-        ServerMonitorInfo info{};
-        info.capture_width = static_cast<uint16_t>(width_);
-        info.capture_height = static_cast<uint16_t>(height_);
-        info.monitor_x = static_cast<int16_t>(capture_->MonitorX());
-        info.monitor_y = static_cast<int16_t>(capture_->MonitorY());
-        info.virtual_width = static_cast<uint32_t>(GetSystemMetrics(SM_CXVIRTUALSCREEN));
-        info.virtual_height = static_cast<uint32_t>(GetSystemMetrics(SM_CYVIRTUALSCREEN));
-        input_server_->SetMonitorInfo(info);
-        LogManager::Log("INFO", "[StreamServer] 显示器信息: capture=%dx%d  offset=(%d,%d)  virtual=%dx%d",
-                        info.capture_width, info.capture_height,
-                        info.monitor_x, info.monitor_y,
-                        info.virtual_width, info.virtual_height);
-    }
+    ServerMonitorInfo info{};
+    info.capture_width = static_cast<uint16_t>(width_);
+    info.capture_height = static_cast<uint16_t>(height_);
+    info.monitor_x = static_cast<int16_t>(capture_->MonitorX());
+    info.monitor_y = static_cast<int16_t>(capture_->MonitorY());
+    info.virtual_x = static_cast<int16_t>(GetSystemMetrics(SM_XVIRTUALSCREEN));
+    info.virtual_y = static_cast<int16_t>(GetSystemMetrics(SM_YVIRTUALSCREEN));
+    info.virtual_width = static_cast<uint32_t>(GetSystemMetrics(SM_CXVIRTUALSCREEN));
+    info.virtual_height = static_cast<uint32_t>(GetSystemMetrics(SM_CYVIRTUALSCREEN));
+    info.capture_method = static_cast<uint8_t>(capture_->Method());
+    input_server_->SetMonitorInfo(info);
+    LogManager::Log("INFO", "[StreamServer] 显示器信息: capture=%ux%u offset=(%d,%d) virtual_origin=(%d,%d) virtual=%ux%u",
+                    static_cast<unsigned>(info.capture_width),
+                    static_cast<unsigned>(info.capture_height),
+                    info.monitor_x, info.monitor_y,
+                    info.virtual_x, info.virtual_y,
+                    static_cast<unsigned>(info.virtual_width),
+                    static_cast<unsigned>(info.virtual_height));
 
-    // 收到客户端输入事件 → 注入到本地系统
+    // 收到客户端输入事件 -> 注入到本地系统
     input_server_->OnInputEvent = [this](const InputMessage& msg)
     {
+        const bool is_mouse_move =
+            msg.type == static_cast<uint8_t>(InputEventType::MouseMove) ||
+            msg.type == static_cast<uint8_t>(InputEventType::MouseMoveAbs);
+        static thread_local auto last_mouse_log = std::chrono::steady_clock::time_point{};
+        const auto now = std::chrono::steady_clock::now();
+        const auto mouse_log_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_mouse_log).count();
+
+        // 鼠标移动事件频率很高，只限频记录，避免每个事件都刷盘放大输入延迟。
+        if (!is_mouse_move || last_mouse_log == std::chrono::steady_clock::time_point{} ||
+            mouse_log_elapsed >= 500)
+        {
+            //LogManager::Log("INFO", "[StreamServer] 收到输入事件: type=%u key=%u button=%u dx=%d dy=%d wheel=%d",
+            //                static_cast<unsigned>(msg.type),
+            //                static_cast<unsigned>(msg.key_code),
+            //                static_cast<unsigned>(msg.button),
+            //                static_cast<int>(msg.dx),
+            //                static_cast<int>(msg.dy),
+            //                static_cast<int>(msg.wheel_delta));
+            if (is_mouse_move)
+                last_mouse_log = now;
+        }
+
         client_connected_.store(true);
         if (input_injector_)
             input_injector_->Inject(msg);
@@ -227,7 +325,7 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
                 }
             }
         }
-        else if (msg_type == 0x03 && payload_len == 8)      // Ping → Pong
+        else if (msg_type == 0x03 && payload_len == 8)      // Ping -> Pong
         {
             input_server_->SendToClient(0x04, payload, payload_len);
         }
@@ -252,48 +350,50 @@ bool StreamServer::Init(uint16_t port, int monitor_index,
 
     input_server_->Start();
     LogManager::Log("INFO", "[StreamServer] 输入控制信道已启动 (port %d)", ctrl_port);
+    return true;
+}
 
-    // ---- 第九步：初始化音频组件（第四阶段：WASAPI 采集 → Opus 编码 → UDP 发送）----
+// ================================================================
+// ---- 阶段 9：音频链路（第四阶段，非致命）----
+// 任一环节失败仅禁用音频，不影响视频主链路
+// ================================================================
+void StreamServer::InitAudio(const char* dest_ip, uint16_t audio_port)
+{
     wasapi_capture_ = new WasapiCapture();
     if (!wasapi_capture_->Init(48000, 2))
     {
         LogManager::Log("WARN", "[StreamServer] WASAPI 采集器初始化失败，音频功能不可用");
         delete wasapi_capture_;
         wasapi_capture_ = nullptr;
+        return;
     }
-    else
+
+    opus_encoder_ = new OpusAudioEncoder();
+    if (!opus_encoder_->Init(48000, 2, 128000, 20))
     {
-        opus_encoder_ = new OpusAudioEncoder();
-        if (!opus_encoder_->Init(48000, 2, 128000, 20))
-        {
-            LogManager::Log("WARN", "[StreamServer] Opus 编码器初始化失败，音频功能不可用");
-            delete opus_encoder_;
-            opus_encoder_ = nullptr;
-        }
-
-        audio_sender_ = new AudioSender();
-        if (!audio_sender_->Init(dest_ip, audio_port))
-        {
-            LogManager::Log("WARN", "[StreamServer] AudioSender 初始化失败，音频功能不可用");
-            delete audio_sender_;
-            audio_sender_ = nullptr;
-        }
-
-        // ---- 设置音频采集回调：PCM 缓冲 → 编码 → 发送 ----
-        if (opus_encoder_ && audio_sender_)
-        {
-            wasapi_capture_->SetCallback(
-                [this](const int16_t* pcm_data, int sample_count, uint32_t timestamp_ms)
-                {
-                    OnAudioData(pcm_data, sample_count, timestamp_ms);
-                });
-        }
+        LogManager::Log("WARN", "[StreamServer] Opus 编码器初始化失败，音频功能不可用");
+        delete opus_encoder_;
+        opus_encoder_ = nullptr;
+        return;
     }
 
-    LogManager::Log("INFO", "[StreamServer] 初始化完成 -> %s:%d  %dx%d@%dfps  %dbps  ctrl:%d  audio:%d",
-                    dest_ip, port, width_, height_, fps_, bitrate_kbps * 1000, ctrl_port, audio_port);
-    return true;
+    audio_sender_ = new AudioSender();
+    if (!audio_sender_->Init(dest_ip, audio_port))
+    {
+        LogManager::Log("WARN", "[StreamServer] AudioSender 初始化失败，音频功能不可用");
+        delete audio_sender_;
+        audio_sender_ = nullptr;
+        return;
+    }
+
+    // ---- 设置音频采集回调：PCM 缓冲 -> 编码 -> 发送 ----
+    wasapi_capture_->SetCallback(
+        [this](const int16_t* pcm_data, int sample_count, uint32_t timestamp_ms)
+        {
+            OnAudioData(pcm_data, sample_count, timestamp_ms);
+        });
 }
+
 
 // ================================================================
 // ---- 主循环：按帧率采集 → 编码 → UDP 发送 ----
@@ -305,6 +405,9 @@ void StreamServer::Run()
     // ---- 帧间隔（微秒精度） ----
     auto frame_duration = std::chrono::microseconds(1000000 / fps_);
     uint64_t frame_index = 0;
+    uint64_t captured_frames = 0;
+    uint64_t encoded_frames = 0;
+    auto stats_time = std::chrono::steady_clock::now();
 
     LogManager::Log("INFO", "[StreamServer] 开始推流... (Ctrl+C 停止)");
 
@@ -318,79 +421,124 @@ void StreamServer::Run()
 
         // ---- 第一步：采集 ----
         CaptureFrame frame;
-        if (!capture_->Capture(frame) || !frame.IsValid())
+        if (!CaptureOneFrame(frame))
         {
-            // ---- 采集失败，记录日志（每秒一次避免刷屏） ----
-            consecutive_failures_++;
-            if (consecutive_failures_ % fps_ == 1)
-            {
-                LogManager::Log("WARN", "[StreamServer] 采集失败，连续 %d 次",
-                                consecutive_failures_);
-            }
-
-            auto elapsed = std::chrono::steady_clock::now() - frame_start;
-            if (elapsed < frame_duration)
-                std::this_thread::sleep_for(frame_duration - elapsed);
+            SleepRemainder(frame_start, frame_duration);
             continue;
         }
 
-        // ---- 采集恢复日志 ----
+        ++captured_frames;
+
+        // ---- 第二步：纹理（GPU 直取 或 GDI 上传） ----
+        ID3D11Texture2D* tex = ResolveTexture(frame);
+        if (!tex)
+        {
+            SleepRemainder(frame_start, frame_duration);
+            continue;
+        }
+
+        // ---- 第三步：取光标 → 编码 → 发送 ----
+        bool sent = EncodeAndSend(tex, frame_index);
+        ++frame_index;
+        if (sent)
+        {
+            ++encoded_frames;
+            ++frame_count_;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        auto stats_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - stats_time).count();
+        if (stats_elapsed >= 1000)
+        {
+            LogManager::Log("INFO", "[StreamServer] 实际视频速率: captured=%llu encoded=%llu target=%d",
+                            static_cast<unsigned long long>(captured_frames * 1000 / stats_elapsed),
+                            static_cast<unsigned long long>(encoded_frames * 1000 / stats_elapsed),
+                            fps_);
+            captured_frames = 0;
+            encoded_frames = 0;
+            stats_time = now;
+        }
+
+        // ---- 帧率限制：补齐剩余时间 ----
+        SleepRemainder(frame_start, frame_duration);
+    }
+
+    LogManager::Log("INFO", "[StreamServer] 推流结束，共 %llu 帧", (unsigned long long)frame_index);
+}
+
+// ---- 采集一帧：失败累计计数并限频打日志，成功则清零 ----
+bool StreamServer::CaptureOneFrame(CaptureFrame& frame)
+{
+    if (capture_->Capture(frame) && frame.IsValid())
+    {
         if (consecutive_failures_ > 0)
         {
             LogManager::Log("INFO", "[StreamServer] 采集恢复，之前连续失败 %d 次",
                             consecutive_failures_);
             consecutive_failures_ = 0;
         }
-
-        // ---- 第二步：获取纹理 ----
-        ID3D11Texture2D* tex = nullptr;
-        if (frame.IsGpu())
-        {
-            // DXGI/WGC 路线：直接用 GPU 纹理
-            tex = frame.gpu_texture;
-        }
-        else if (upload_tex_ && frame.cpu_data)
-        {
-            // GDI 路线：CPU 数据上传到 GPU 纹理
-            d3d_ctx_->UpdateSubresource(upload_tex_, 0, nullptr,
-                frame.cpu_data, frame.cpu_stride, 0);
-            tex = upload_tex_;
-        }
-
-        if (!tex)
-        {
-            auto elapsed = std::chrono::steady_clock::now() - frame_start;
-            if (elapsed < frame_duration)
-                std::this_thread::sleep_for(frame_duration - elapsed);
-            continue;
-        }
-
-        // ---- 第三步：编码 + 发送 ----
-        // 首帧或收到 IDR 请求时强制编 IDR
-        bool force_idr = (frame_index == 0) || force_next_idr_.exchange(false);
-        std::vector<uint8_t> h264_data;
-        uint32_t timestamp = static_cast<uint32_t>(frame_index * (1000 / fps_));
-
-        if (encoder_->EncodeFrame(tex, frame_index, force_idr, h264_data,
-                                  nullptr,
-                                  capture_->MonitorX(), capture_->MonitorY())
-            && !h264_data.empty())
-        {
-            sender_->SendFrame(h264_data.data(), (int)h264_data.size(),
-                               (uint16_t)(frame_index & 0xFFFF),
-                               timestamp, force_idr);
-        }
-
-        ++frame_index;
-        ++frame_count_;
-
-        // ---- 帧率限制：剩余时间休眠 ----
-        auto elapsed = std::chrono::steady_clock::now() - frame_start;
-        if (elapsed < frame_duration)
-            std::this_thread::sleep_for(frame_duration - elapsed);
+        return true;
     }
 
-    LogManager::Log("INFO", "[StreamServer] 推流结束，共 %llu 帧", (unsigned long long)frame_index);
+    // ---- 采集失败，每秒一次日志避免刷屏 ----
+    consecutive_failures_++;
+    if (consecutive_failures_ % fps_ == 1)
+    {
+        LogManager::Log("WARN", "[StreamServer] 采集失败，连续 %d 次",
+                        consecutive_failures_);
+    }
+    return false;
+}
+
+// ---- 解析纹理：DXGI/WGC 直取 GPU 纹理；GDI 上传到 upload_tex_ ----
+ID3D11Texture2D* StreamServer::ResolveTexture(CaptureFrame& frame)
+{
+    if (frame.IsGpu())
+        return frame.gpu_texture;                       // DXGI/WGC 路线
+
+    if (upload_tex_ && frame.cpu_data)                  // GDI 路线：CPU → GPU 上传
+    {
+        d3d_ctx_->UpdateSubresource(upload_tex_, 0, nullptr,
+                                    frame.cpu_data, frame.cpu_stride, 0);
+        return upload_tex_;
+    }
+    return nullptr;
+}
+
+// ---- 编码并发送一帧：DXGI 路线补光标合成，WGC/GDI 自动安全返回 ----
+bool StreamServer::EncodeAndSend(ID3D11Texture2D* tex, uint64_t frame_index)
+{
+    bool force_idr = (frame_index == 0) || force_next_idr_.exchange(false);
+
+    // ---- 取光标：仅 DXGI 路线返回有效（MonitorCapture::GetCursorInfo 内部已判 Kind）----
+    CursorInfo ci{};
+    const CursorInfo* cursor_ptr = capture_->GetCursorInfo(ci) ? &ci : nullptr;
+
+    std::vector<uint8_t> h264_data;
+    uint32_t timestamp = static_cast<uint32_t>(frame_index * (1000 / fps_));
+
+    if (encoder_->EncodeFrame(tex, frame_index, force_idr, h264_data,
+                                nullptr,
+                              capture_->MonitorX(), capture_->MonitorY())
+        && !h264_data.empty())
+    {
+        sender_->SendFrame(h264_data.data(), (int)h264_data.size(),
+                           (uint16_t)(frame_index & 0xFFFF),
+                           timestamp, force_idr);
+        return true;
+    }
+
+    return false;
+}
+
+// ---- 帧率限制：休眠补齐到 frame_duration ----
+void StreamServer::SleepRemainder(std::chrono::steady_clock::time_point frame_start,
+                                  std::chrono::microseconds frame_duration)
+{
+    auto elapsed = std::chrono::steady_clock::now() - frame_start;
+    if (elapsed < frame_duration)
+        std::this_thread::sleep_for(frame_duration - elapsed);
 }
 
 // ---- 停止主循环 ----
