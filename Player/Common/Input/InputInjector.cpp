@@ -5,7 +5,6 @@
 #include <windows.h>
 #include <array>
 #include <cstdint>
-#include <QDebug>
 
 // ================================================================
 // ---- VK → Scancode 映射表（美式英文布局 00000409） ----
@@ -50,50 +49,101 @@ namespace
         0, 93, 0, 98, 0, 0, 0, 0            // 0xF8-0xFF
     };
 
-    // ---- 线程本地缓存：上次已知的输入桌面句柄 ----
-    thread_local HDESK last_known_desktop_ = nullptr;
+    thread_local bool sendinput_success_logged_ = false;
+
+    void LogInputFailure(const INPUT& input, const char* stage, DWORD error)
+    {
+        if (input.type == INPUT_MOUSE)
+        {
+            LogManager::Log("ERR", "[InputInjector] SendInput %s失败: err=%lu mouse_flags=0x%08X dx=%ld dy=%ld data=%lu",
+                            stage,
+                            static_cast<unsigned long>(error),
+                            static_cast<unsigned>(input.mi.dwFlags),
+                            static_cast<long>(input.mi.dx),
+                            static_cast<long>(input.mi.dy),
+                            static_cast<unsigned long>(input.mi.mouseData));
+            return;
+        }
+
+        if (input.type == INPUT_KEYBOARD)
+        {
+            LogManager::Log("ERR", "[InputInjector] SendInput %s失败: err=%lu key_flags=0x%08X vk=%u scan=%u",
+                            stage,
+                            static_cast<unsigned long>(error),
+                            static_cast<unsigned>(input.ki.dwFlags),
+                            static_cast<unsigned>(input.ki.wVk),
+                            static_cast<unsigned>(input.ki.wScan));
+            return;
+        }
+
+        LogManager::Log("ERR", "[InputInjector] SendInput %s失败: err=%lu input_type=%lu",
+                        stage,
+                        static_cast<unsigned long>(error),
+                        static_cast<unsigned long>(input.type));
+    }
 
     // ---- 切换到当前输入桌面（UAC 兼容） ----
     // 当 UAC 弹窗或锁屏时，系统切换到 Winlogon 桌面
     // 此时 SendInput 会失败，需要先 SetThreadDesktop 到当前输入桌面
     // 抄自 Sunshine misc.cpp syncThreadDesktop()
-    HDESK SyncThreadDesktop()
+    bool SyncThreadDesktop()
     {
         HDESK hdesk = OpenInputDesktop(DF_ALLOWOTHERACCOUNTHOOK, FALSE, GENERIC_ALL);
         if (!hdesk)
         {
+            hdesk = OpenInputDesktop(DF_ALLOWOTHERACCOUNTHOOK, FALSE,
+                                     DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP);
+        }
+        if (!hdesk)
+        {
             LogManager::Log("ERR", "[InputInjector] OpenInputDesktop 失败: 0x%08X",
                             static_cast<unsigned>(GetLastError()));
-            return nullptr;
+            return false;
         }
 
+        bool ok = true;
         if (!SetThreadDesktop(hdesk))
         {
             LogManager::Log("ERR", "[InputInjector] SetThreadDesktop 失败: 0x%08X",
                             static_cast<unsigned>(GetLastError()));
+            ok = false;
         }
 
         CloseDesktop(hdesk);
-        return hdesk;
+        return ok;
     }
 
     // ---- SendInput 封装（含 UAC 桌面切换重试） ----
     // 抄自 Sunshine input.cpp send_input()
     // 失败时切换桌面后重试一次
-    void SendInputWithRetry(INPUT& input)
+    bool SendInputWithRetry(INPUT& input)
     {
-    retry:
-        if (SendInput(1, &input, sizeof(INPUT)) != 1)
+        SetLastError(ERROR_SUCCESS);
+        if (SendInput(1, &input, sizeof(INPUT)) == 1)
         {
-            HDESK hdesk = SyncThreadDesktop();
-            if (last_known_desktop_ != hdesk)
+            if (!sendinput_success_logged_)
             {
-                last_known_desktop_ = hdesk;
-                goto retry;                                          // 桌面已切换，重试
+                LogManager::Log("INFO", "[InputInjector] SendInput 首次成功");
+                sendinput_success_logged_ = true;
             }
-            LogManager::Log("ERR", "[InputInjector] SendInput 失败: GetLastError=%d",
-                            static_cast<int>(GetLastError()));
+            return true;
         }
+
+        DWORD first_error = GetLastError();
+        LogInputFailure(input, "首次", first_error);
+
+        if (!SyncThreadDesktop())
+            return false;
+
+        SetLastError(ERROR_SUCCESS);
+        if (SendInput(1, &input, sizeof(INPUT)) == 1)
+        {
+            LogManager::Log("INFO", "[InputInjector] SendInput 切换输入桌面后成功");
+            return true;
+        }
+
+        LogInputFailure(input, "重试", GetLastError());
+        return false;
     }
 } // anonymous namespace
 
