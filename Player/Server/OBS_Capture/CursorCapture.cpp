@@ -211,7 +211,7 @@ bool CursorCapture::GetInfo(CursorInfo& out_info) const
 {
     if (!visible_ || hidden_ || bitmap_data_.empty())
     {
-        qDebug() << "[CursorCapture] 获取光标信息失败，光标不可见或被隐藏";
+        // qDebug() << "[CursorCapture] 获取光标信息失败，光标不可见或被隐藏";
         return false;
     }
 

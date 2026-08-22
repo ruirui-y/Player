@@ -1,5 +1,6 @@
 #include "ObsNvencEncoder.h"
 
+#include <cstdio>
 #include <cstring>
 #include <QDebug>
 
@@ -8,8 +9,19 @@ extern "C"
 #include <libavcodec/avcodec.h>
 #include <libavutil/pixfmt.h>
 #include <libavutil/frame.h>
+#include <libavutil/error.h>
 #include <libavutil/opt.h>
+#include <libavutil/version.h>
 #include <libswscale/swscale.h>
+}
+
+static const char* AvErrorText(int error, char* buffer, size_t buffer_size)
+{
+    if (av_strerror(error, buffer, buffer_size) < 0)
+    {
+        std::snprintf(buffer, buffer_size, "unknown FFmpeg error");
+    }
+    return buffer;
 }
 
 // ========== 构造 / 析构 ==========
@@ -64,7 +76,7 @@ bool ObsNvencEncoder::CreateSwsContext()
     sws_ctx_ = sws_getContext(
         width_, height_, AV_PIX_FMT_BGRA,
         width_, height_, AV_PIX_FMT_NV12,
-        SWS_BILINEAR, nullptr, nullptr, nullptr);
+        SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
 
     if (!sws_ctx_)
     {
@@ -98,31 +110,38 @@ bool ObsNvencEncoder::GpuTextureToNv12(ID3D11Texture2D* texture,
         return false;
     }
 
-    // ---- 第三步：拷贝到可写 BGRA 缓冲（staging 是只读的，光标合成需要可写缓冲） ----
-    int buf_stride = width_ * 4;
-    if (bgra_buffer_.empty())
-    {
-        bgra_buffer_.resize(static_cast<size_t>(width_) * height_ * 4);
-    }
+    // ---- 第三步：准备 sws_scale 输入 ----
+    // 没有光标时直接读取 Map 内存，避免每帧额外复制整张 BGRA 纹理。
+    const bool has_cursor = cursor && cursor->visible && cursor->bitmap;
+    const uint8_t* source_bgra = static_cast<const uint8_t*>(mapped.pData);
+    int source_stride = static_cast<int>(mapped.RowPitch);
 
-    // 逐行拷贝（GPU RowPitch 可能与 width*4 不同，需要对齐）
-    for (int y = 0; y < height_; y++)
+    // DXGI 路线不包含光标，只有需要合成时才复制到可写缓冲。
+    if (has_cursor)
     {
-        memcpy(bgra_buffer_.data() + y * buf_stride,
-               static_cast<uint8_t*>(mapped.pData) + y * mapped.RowPitch,
-               buf_stride);
-    }
+        const int buf_stride = width_ * 4;
+        if (bgra_buffer_.empty())
+        {
+            bgra_buffer_.resize(static_cast<size_t>(width_) * height_ * 4);
+        }
 
-    // ---- 第四步：光标合成（DXGI 路线不含光标，需要手动绘制） ----
-    if (cursor && cursor->visible && cursor->bitmap)
-    {
+        // GPU RowPitch 可能与 width*4 不同，需要逐行拷贝。
+        for (int y = 0; y < height_; y++)
+        {
+            memcpy(bgra_buffer_.data() + y * buf_stride,
+                   static_cast<const uint8_t*>(mapped.pData) + y * mapped.RowPitch,
+                   buf_stride);
+        }
+
         DrawCursorOnBuffer(bgra_buffer_.data(), width_, height_,
                            cursor, monitor_x, monitor_y);
+        source_bgra = bgra_buffer_.data();
+        source_stride = buf_stride;
     }
 
     // ---- 第五步：BGRA → NV12（sws_scale 色彩转换） ----
-    const uint8_t* src_data[] = { bgra_buffer_.data() };
-    const int src_stride[] = { buf_stride };
+    const uint8_t* src_data[] = { source_bgra };
+    const int src_stride[] = { source_stride };
 
     uint8_t* dst_data[] = {
         nv12_data_,                                                    // Y 平面起点
@@ -145,14 +164,14 @@ bool ObsNvencEncoder::GpuTextureToNv12(ID3D11Texture2D* texture,
         case DXGI_FORMAT_R16G16B16A16_FLOAT: fmt_name = "R16G16B16A16_FLOAT"; break;
         default: break;
         }
-        const uint8_t* p = bgra_buffer_.data();
+        const uint8_t* p = source_bgra;
         qDebug("[ObsNvenc] 输入纹理格式: %s, staging RowPitch: %u",
                fmt_name, (uint32_t)mapped.RowPitch);
         qDebug("[ObsNvenc] staging 首像素 BGRA: %02X %02X %02X %02X",
                p[0], p[1], p[2], p[3]);
         qDebug("[ObsNvenc] staging 第100行首像素: %02X %02X %02X %02X",
-               p[buf_stride * 100], p[buf_stride * 100 + 1],
-               p[buf_stride * 100 + 2], p[buf_stride * 100 + 3]);
+               p[source_stride * 100], p[source_stride * 100 + 1],
+               p[source_stride * 100 + 2], p[source_stride * 100 + 3]);
     }
 
     sws_scale(sws_ctx_, src_data, src_stride, 0, height_,
@@ -272,8 +291,7 @@ bool ObsNvencEncoder::Init(ID3D11Device* d3d_device, int width, int height,
     codec_ = avcodec_find_encoder_by_name("h264_nvenc");
     if (!codec_)
     {
-        // 回退：按名称查找 AMF/硬件编码器
-        codec_ = avcodec_find_encoder(AV_CODEC_ID_H264);
+        codec_ = avcodec_find_encoder_by_name("libx264");
         if (!codec_)
         {
             qDebug() << "[ObsNvenc] 找不到 H.264 编码器";
@@ -286,6 +304,9 @@ bool ObsNvencEncoder::Init(ID3D11Device* d3d_device, int width, int height,
         qDebug() << "[ObsNvenc] 使用 NVENC 编码器";
     }
 
+    qDebug("[ObsNvenc] FFmpeg libavcodec=%u, 配置: %s",
+           avcodec_version(), avcodec_configuration());
+
     // ---- 第二步：创建编码上下文 ----
     codec_ctx_ = avcodec_alloc_context3(codec_);
     if (!codec_ctx_)
@@ -294,30 +315,93 @@ bool ObsNvencEncoder::Init(ID3D11Device* d3d_device, int width, int height,
         return false;
     }
 
-    // ---- 第三步：设置编码参数（与 FFmpeg 命令行 -preset p1 -tune ll -rc cbr 一致） ----
-    codec_ctx_->width = width_;
-    codec_ctx_->height = height_;
-    codec_ctx_->time_base = { 1, fps_ };                                // PTS 时间基
-    codec_ctx_->framerate = { fps_, 1 };
-    codec_ctx_->pix_fmt = AV_PIX_FMT_NV12;                              // NVENC 输入格式
-    codec_ctx_->bit_rate = static_cast<int64_t>(bitrate_kbps_) * 1000;
-    codec_ctx_->gop_size = fps_ * 2;                                    // GOP = 2 秒
-    codec_ctx_->max_b_frames = 0;                                       // 无 B 帧（低延迟）
-    codec_ctx_->thread_count = 1;                                       // NVENC 不需要多线程
-
-    // ---- NVENC 专有参数（通过 av_opt_set 传入） ----
-    if (strcmp(codec_->name, "h264_nvenc") == 0)
+    auto configure_codec_context = [this](AVCodecContext* context, const AVCodec* codec)
     {
-        av_opt_set(codec_ctx_->priv_data, "preset", "p1", 0);          // 最快预设
-        av_opt_set(codec_ctx_->priv_data, "tune", "ll", 0);            // 低延迟调优
-        av_opt_set(codec_ctx_->priv_data, "rc", "cbr", 0);             // 恒定码率
-        av_opt_set(codec_ctx_->priv_data, "forced-idr", "1", 0);       // 允许强制 IDR
-    }
+        context->width = width_;
+        context->height = height_;
+        context->time_base = { 1, fps_ };                              // PTS 时间基
+        context->framerate = { fps_, 1 };
+        context->pix_fmt = AV_PIX_FMT_NV12;
+        context->bit_rate = static_cast<int64_t>(bitrate_kbps_) * 1000;
+        context->gop_size = fps_ * 2;
+        context->max_b_frames = 0;
+        // NVENC 本身不需要 FFmpeg 多线程；libx264 使用自动线程数。
+        context->thread_count = strcmp(codec->name, "libx264") == 0 ? 0 : 1;
+        context->flags |= AV_CODEC_FLAG_LOW_DELAY;
+
+        if (strcmp(codec->name, "h264_nvenc") == 0)
+        {
+            const int preset_ret = av_opt_set(context->priv_data, "preset", "p1", 0);
+            const int tune_ret = av_opt_set(context->priv_data, "tune", "ll", 0);
+            const int rc_ret = av_opt_set(context->priv_data, "rc", "cbr", 0);
+            const int idr_ret = av_opt_set(context->priv_data, "forced-idr", "1", 0);
+
+            qDebug("[ObsNvenc] NVENC 参数结果: preset=%d tune=%d rc=%d forced-idr=%d",
+                   preset_ret, tune_ret, rc_ret, idr_ret);
+        }
+        else if (strcmp(codec->name, "libx264") == 0)
+        {
+            // 低延迟软件编码使用切片线程，避免 x264 因帧间 lookahead 产生额外排队。
+            // 这些参数通过 x264-params 传入；部分 FFmpeg 构建不暴露同名独立 AVOption。
+            context->thread_type = FF_THREAD_SLICE;
+            context->flags2 |= AV_CODEC_FLAG2_FAST;
+
+            const int preset_ret = av_opt_set(context->priv_data, "preset", "ultrafast", 0);
+            const int tune_ret = av_opt_set(context->priv_data, "tune", "zerolatency", 0);
+            const int x264_params_ret = av_opt_set(
+                context->priv_data,
+                "x264-params",
+                "rc-lookahead=0:sync-lookahead=0:sliced-threads=1:repeat-headers=1",
+                0);
+
+            qDebug("[ObsNvenc] libx264 参数结果: preset=%d tune=%d x264-params=%d "
+                   "threads=%d thread_type=slice",
+                   preset_ret, tune_ret, x264_params_ret,
+                   context->thread_count);
+        }
+    };
+
+    // ---- 第三步：设置编码参数 ----
+    configure_codec_context(codec_ctx_, codec_);
 
     // ---- 第四步：打开编码器 ----
-    if (avcodec_open2(codec_ctx_, codec_, nullptr) < 0)
+    int open_ret = avcodec_open2(codec_ctx_, codec_, nullptr);
+    if (open_ret < 0 && strcmp(codec_->name, "h264_nvenc") == 0)
     {
-        qDebug() << "[ObsNvenc] avcodec_open2 失败";
+        char error_text[AV_ERROR_MAX_STRING_SIZE] = {};
+        qDebug("[ObsNvenc] h264_nvenc avcodec_open2 失败: ret=%d (%s)",
+               open_ret, AvErrorText(open_ret, error_text, sizeof(error_text)));
+
+        // NVENC 失败时回退到软件 H.264，避免采集服务因硬件编码器不可用而无法启动。
+        avcodec_free_context(&codec_ctx_);
+        codec_ = avcodec_find_encoder_by_name("libx264");
+        if (!codec_)
+        {
+            qDebug() << "[ObsNvenc] NVENC 失败且找不到 libx264，编码器初始化终止";
+            return false;
+        }
+
+        codec_ctx_ = avcodec_alloc_context3(codec_);
+        if (!codec_ctx_)
+        {
+            qDebug() << "[ObsNvenc] 回退 libx264 时 avcodec_alloc_context3 失败";
+            return false;
+        }
+
+        configure_codec_context(codec_ctx_, codec_);
+        open_ret = avcodec_open2(codec_ctx_, codec_, nullptr);
+        if (open_ret == 0)
+        {
+            qDebug("[ObsNvenc] 已回退到软件编码器: %s", codec_->name);
+        }
+    }
+
+    if (open_ret < 0)
+    {
+        char error_text[AV_ERROR_MAX_STRING_SIZE] = {};
+        qDebug("[ObsNvenc] avcodec_open2 失败: codec=%s ret=%d (%s)",
+               codec_ ? codec_->name : "null",
+               open_ret, AvErrorText(open_ret, error_text, sizeof(error_text)));
         return false;
     }
 

@@ -1,4 +1,4 @@
-#ifndef CAPTUREBACKEND_H
+﻿#ifndef CAPTUREBACKEND_H
 #define CAPTUREBACKEND_H
 
 #include "CaptureCommon.h"

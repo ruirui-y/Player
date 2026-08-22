@@ -90,6 +90,7 @@ bool ObsNvencEncoderFast::Init(ID3D11Device* d3d_device, int width, int height, 
     codec_ctx_->gop_size = fps_ * 2;
     codec_ctx_->max_b_frames = 0;
     codec_ctx_->thread_count = 1;
+    codec_ctx_->flags |= AV_CODEC_FLAG_LOW_DELAY;
 
     // 设置 NVENC 参数
     av_opt_set(codec_ctx_->priv_data, "preset", "p1", 0);   // 最快预设
