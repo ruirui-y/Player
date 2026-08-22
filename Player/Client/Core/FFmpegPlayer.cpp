@@ -4,6 +4,7 @@
 #include "StreamAudioRenderer.h"
 #include "Common/Input/InputTransport.h"
 #include "Common/Network/NetworkStats.h"
+#include "Common/LogManager.h"
 #include "RttMeasurer.h"
 #include "Pacer.h"
 #include <QDebug>
@@ -119,7 +120,40 @@ bool FFmpegPlayer::OpenStream(uint16_t video_port, int fps, uint16_t audio_port)
     duration_ms_ = 0;                                      // 串流无固定时长
     closed_ = false;                                       // 标记为已打开
 
-    // ---- 第一步：手动构造 H.264 的 AVCodecParameters ----
+    // ---- 第一步 + 第二步：视频解码器（手动构造 H.264 参数，硬解失败回退软解）----
+    if (!InitVideoDecoder())
+        return false;
+
+    // ---- 第二步B：音频解码器（非致命）----
+    if (audio_port > 0)
+        InitAudioDecoder();                                // 失败仅 WARN，不影响视频
+
+    // ---- 第四步：UDP 视频接收器 + 服务端 IP 回调（失败则报错返回）----
+    if (!InitVideoReceiver(video_port))
+        return false;
+
+    // ---- 第四步B：UDP 音频接收器（非致命）----
+    if (audio_port > 0)
+        InitAudioReceiver(audio_port);                     // 失败仅 WARN，仅视频
+
+    // ---- 第八阶段：VSync 帧步调器 ----
+    InitPacer();
+
+    // ---- 第三步：渲染器延迟初始化 ----
+    // 不在这里创建交换链，因为还不知道服务端发来的视频分辨率
+    // 等第一帧解码出来后，用 frame->width/height 初始化渲染器
+    // 见 DecodeLoop() 串流模式中的延迟初始化逻辑
+
+    qDebug() << "[FFmpegPlayer] === 串流加载完毕 ==="
+             << "fps" << fps << "视频端口" << video_port << "音频端口" << audio_port
+             << "（分辨率待首帧自动获取）";
+    emit SigLoaded(0);                                     // 串流无时长，发 0
+    return true;
+}
+
+bool FFmpegPlayer::InitVideoDecoder()
+{
+    // ---- 手动构造 H.264 的 AVCodecParameters ----
     // 串流没有 AVFormatContext，需要手动告诉解码器 codec_id / 像素格式
     // width/height 设为 0：H.264 解码器会从 SPS NAL 中自动解析实际分辨率
     AVCodecParameters* par = avcodec_parameters_alloc();
@@ -129,7 +163,7 @@ bool FFmpegPlayer::OpenStream(uint16_t video_port, int fps, uint16_t audio_port)
     par->height = 0;                                       // 由 SPS 自动填充
     par->format = AV_PIX_FMT_NV12;                         // NVENC 输出 NV12
 
-    // ---- 第二步：打开视频解码器 ----
+    // ---- 打开视频解码器（硬解优先，失败回退软解）----
     video_decoder_.SetStreamIndex(0);
     if (!video_decoder_.OpenVideo(par, true))
     {
@@ -142,36 +176,34 @@ bool FFmpegPlayer::OpenStream(uint16_t video_port, int fps, uint16_t audio_port)
         }
     }
     avcodec_parameters_free(&par);
+    return true;
+}
 
-    // ---- 第二步B：手动构造 Opus 的 AVCodecParameters 并打开音频解码器 ----
+bool FFmpegPlayer::InitAudioDecoder()
+{
+    // ---- 手动构造 Opus 的 AVCodecParameters ----
     // 串流音频使用 Opus 编码，参数固定：48kHz / 2ch / float32-planar
-    if (audio_port > 0)
-    {
-        AVCodecParameters* audio_par = avcodec_parameters_alloc();
-        audio_par->codec_type = AVMEDIA_TYPE_AUDIO;
-        audio_par->codec_id = AV_CODEC_ID_OPUS;
-        audio_par->sample_rate = 48000;
-        audio_par->format = AV_SAMPLE_FMT_FLTP;
-        av_channel_layout_default(&audio_par->ch_layout, 2);       // 立体声
+    AVCodecParameters* audio_par = avcodec_parameters_alloc();
+    audio_par->codec_type = AVMEDIA_TYPE_AUDIO;
+    audio_par->codec_id = AV_CODEC_ID_OPUS;
+    audio_par->sample_rate = 48000;
+    audio_par->format = AV_SAMPLE_FMT_FLTP;
+    av_channel_layout_default(&audio_par->ch_layout, 2);       // 立体声
 
-        audio_decoder_.SetStreamIndex(0);
-        if (audio_decoder_.OpenAudio(audio_par))
-        {
-            stream_audio_renderer_->Start();
-        }
-        else
-        {
-            qDebug() << "[FFmpegPlayer] 音频解码器打开失败，仅视频";
-        }
-        avcodec_parameters_free(&audio_par);
-    }
+    audio_decoder_.SetStreamIndex(0);
+    bool ok = audio_decoder_.OpenAudio(audio_par);
+    avcodec_parameters_free(&audio_par);
 
-    // ---- 第三步：渲染器延迟初始化 ----
-    // 不在这里创建交换链，因为还不知道服务端发来的视频分辨率
-    // 等第一帧解码出来后，用 frame->width/height 初始化渲染器
-    // 见 DecodeLoop() 串流模式中的延迟初始化逻辑
+    if (ok)
+        stream_audio_renderer_->Start();
+    else
+        qDebug() << "[FFmpegPlayer] 音频解码器打开失败，仅视频";
+    return ok;
+}
 
-    // ---- 第四步：创建并初始化 UDP 视频接收器 ----
+bool FFmpegPlayer::InitVideoReceiver(uint16_t video_port)
+{
+    // ---- 创建并初始化 UDP 视频接收器 ----
     video_receiver_ = new VideoReceiver();
     if (!video_receiver_->Init(video_port, &video_packet_queue_))
     {
@@ -183,33 +215,33 @@ bool FFmpegPlayer::OpenStream(uint16_t video_port, int fps, uint16_t audio_port)
         return false;
     }
 
-    // ---- 服务端 IP 回调：首包到达时通知 PlayerApp（替代轮询） ----
+    // ---- 服务端 IP 回调：首包到达时通知 PlayerApp（替代轮询）----
     video_receiver_->SetSenderIPCallback([this](const std::string& ip)
     {
         emit SigSenderIPReady(QString::fromStdString(ip));
     });
+    return true;
+}
 
-    // ---- 第四步B：创建并初始化 UDP 音频接收器 ----
-    if (audio_port > 0)
+bool FFmpegPlayer::InitAudioReceiver(uint16_t audio_port)
+{
+    // ---- 创建并初始化 UDP 音频接收器 ----
+    audio_receiver_ = new AudioReceiver();
+    if (!audio_receiver_->Init(audio_port, &audio_packet_queue_))
     {
-        audio_receiver_ = new AudioReceiver();
-        if (!audio_receiver_->Init(audio_port, &audio_packet_queue_))
-        {
-            qDebug() << "[FFmpegPlayer] AudioReceiver 初始化失败，仅视频";
-            delete audio_receiver_;
-            audio_receiver_ = nullptr;
-        }
+        qDebug() << "[FFmpegPlayer] AudioReceiver 初始化失败，仅视频";
+        delete audio_receiver_;
+        audio_receiver_ = nullptr;
+        return false;                                       // 调用方按非致命处理，仅视频
     }
+    return true;
+}
 
-    // ---- 第八阶段：创建 VSync 帧步调器 ----
+void FFmpegPlayer::InitPacer()
+{
+    // ---- 创建 VSync 帧步调器（按需，已存在则复用）----
     if (!pacer_)
         pacer_ = new Pacer();
-
-    qDebug() << "[FFmpegPlayer] === 串流加载完毕 ==="
-             << "fps" << fps << "视频端口" << video_port << "音频端口" << audio_port
-             << "（分辨率待首帧自动获取）";
-    emit SigLoaded(0);                                     // 串流无时长，发 0
-    return true;
 }
 
 // ---- 开始/恢复播放 ----
@@ -605,6 +637,9 @@ void FFmpegPlayer::InitSyncState()
 // ================================================================
 void FFmpegPlayer::ProcessStreamingLoop(bool has_audio, AVRational video_tb)
 {
+    auto last_drop_log_time = std::chrono::steady_clock::now();
+    int dropped_since_log = 0;
+
     while (playing_)
     {
         // ---- 暂停处理 ----
@@ -631,6 +666,28 @@ void FFmpegPlayer::ProcessStreamingLoop(bool has_audio, AVRational video_tb)
         // ---- 取视频帧（阻塞）----
         AVFrame* video_frame = video_frame_queue_.Pop();
         if (!video_frame) break;
+
+        // 串流模式必须实时优先：渲染线程只显示最新帧，旧帧直接丢弃，避免延迟越积越大。
+        AVFrame* newer_frame = nullptr;
+        while (video_frame_queue_.TryPop(newer_frame))
+        {
+            av_frame_free(&video_frame);
+            video_frame = newer_frame;
+            dropped_since_log++;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        auto drop_log_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_drop_log_time).count();
+        if (dropped_since_log > 0 && drop_log_elapsed >= 1000)
+        {
+            LogManager::Log("WARN", "[FFmpegPlayer] 串流渲染丢弃旧解码帧: dropped=%d frame_queue=%zu packet_queue=%zu",
+                            dropped_since_log,
+                            video_frame_queue_.Size(),
+                            video_packet_queue_.Size());
+            dropped_since_log = 0;
+            last_drop_log_time = now;
+        }
 
         if (video_frame->pts != AV_NOPTS_VALUE)
             current_pts_ms_ = static_cast<qint64>(video_frame->pts * av_q2d(video_tb) * 1000.0);

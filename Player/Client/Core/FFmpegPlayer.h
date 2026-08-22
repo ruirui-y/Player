@@ -23,6 +23,7 @@ class Pacer;                // VSync 帧步调器（前向声明）
 struct AVPacket;
 struct AVFrame;
 struct AVRational;
+struct AVCodecParameters;
 
 class FFmpegPlayer : public QObject
 {
@@ -72,6 +73,13 @@ signals:
 
 private:
     void DecodeLoop();                                                                                      // 渲染线程主循环
+
+    // ---- OpenStream 子阶段（从 OpenStream 拆分，便于独立测试）----
+    bool InitVideoDecoder();                                                                                // 构造 H.264 AVCodecParameters 并打开视频解码器（硬解失败回退软解）
+    bool InitAudioDecoder();                                                                                // 构造 Opus AVCodecParameters 并打开音频解码器（失败仅 WARN）
+    bool InitVideoReceiver(uint16_t video_port);                                                            // 创建并初始化 UDP 视频接收器 + 绑定服务端 IP 回调
+    bool InitAudioReceiver(uint16_t audio_port);                                                            // 创建并初始化 UDP 音频接收器（失败仅 WARN）
+    void InitPacer();                                                                                       // 创建 VSync 帧步调器（按需）
 
     void GetStreamInfo(double& fps, AVRational& video_tb, bool& has_audio, double& frame_interval_ms);      // 获取流信息（帧率、时基、音频标志）
     bool WaitForFrameQueues(bool has_audio);                                                                // 等待帧队列就绪，返回 false 表示退出

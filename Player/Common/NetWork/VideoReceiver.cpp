@@ -10,6 +10,12 @@ extern "C"
 
 #include <QDebug>
 
+namespace
+{
+    constexpr size_t kMaxStreamingPacketQueue = 6;
+    constexpr size_t kKeepStreamingPacketQueue = 1;
+}
+
 // 初始化 Winsock 并绑定 UDP socket
 bool VideoReceiver::Init(uint16_t listen_port, SafeQueue<AVPacket*>* packet_queue)
 {
@@ -126,15 +132,7 @@ void VideoReceiver::ReceiveLoop()
 
         // ---- 第一个包：记录发送方 IP + 触发回调 ----
         if (sender_ip_.empty())
-        {
-            char ip_str[INET_ADDRSTRLEN] = {};
-            inet_ntop(AF_INET, &from_addr.sin_addr, ip_str, sizeof(ip_str));
-            sender_ip_ = ip_str;
-            qDebug() << "[VideoReceiver] 发送方 IP:" << sender_ip_.c_str();
-
-            if (sender_ip_cb_)
-                sender_ip_cb_(sender_ip_);
-        }
+            RecordSenderIP(from_addr);
 
         ++total_packets_;
         total_bytes_ += recv_len;
@@ -153,123 +151,186 @@ void VideoReceiver::ReceiveLoop()
 
         // ---- 3.5：丢包检测与 IDR 请求 ----
         uint16_t current_frame = reassembler_.GetFrameIndex();
-
-        // 同步 FEC 恢复统计（NalReassembler 内部累计）
-        fec_recovered_frames_ = reassembler_.GetFecRecoveredCount();
-
-        if (expected_frame_index_ != 0)
-        {
-            // 检查帧序号连续性
-            uint16_t diff = (current_frame - expected_frame_index_) & 0xFFFF;
-            if (diff != 0)
-            {
-                // 跳帧 = 丢帧（diff=0 正常，diff>0 有丢帧）
-                int skipped = static_cast<int>(diff);
-                total_lost_frames_ += skipped;
-                consecutive_lost_frames_ += skipped;
-
-                LogManager::Log("WARN", "[VideoReceiver] 丢帧检测: 期望 %d, 实际 %d, 跳过 %d 帧, 连续丢 %d, FEC恢复 %d",
-                                expected_frame_index_, current_frame, skipped, consecutive_lost_frames_,
-                                fec_recovered_frames_);
-
-                // 连续丢帧超过阈值 → 请求 IDR
-                if (consecutive_lost_frames_ >= MAX_CONSECUTIVE_LOST)
-                {
-                    auto now = std::chrono::steady_clock::now();
-                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now - last_idr_request_time_).count();
-
-                    if (elapsed >= IDR_REQUEST_TIMEOUT_MS)
-                    {
-                        LogManager::Log("WARN", "[VideoReceiver] 连续丢 %d 帧，请求 IDR",
-                                        consecutive_lost_frames_);
-                        if (idr_request_callback_)
-                        {
-                            idr_request_callback_();
-                        }
-                        last_idr_request_time_ = now;
-                        consecutive_lost_frames_ = 0;           // 重置，等 IDR 到达
-                    }
-                }
-            }
-            else
-            {
-                // 正常连续帧
-                consecutive_lost_frames_ = 0;
-            }
-        }
-        expected_frame_index_ = (current_frame + 1) & 0xFFFF;
+        HandleFrameLossAndIdr(current_frame);
 
         // ---- 3.6：每秒网络统计上报 ----
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now - last_stats_time_).count();
-        if (elapsed_ms >= 1000 && stats_callback_)
-        {
-            NetworkStats st;
-            st.receive_fps = static_cast<int>(total_frames_ - last_stats_frames_);
-            receive_fps_.store(st.receive_fps);
-            st.fec_recovered = reassembler_.GetFecRecoveredCount() - last_fec_recovered_;
-            st.fec_failed = reassembler_.GetFecFailCount() - last_fec_failed_;
-            st.lost_frames = total_lost_frames_;
-
-            // 丢包率：基于包序号缺口（粗略估算）
-            uint64_t pkts_received = total_packets_ - last_stats_packets_;
-            if (pkts_received > 0)
-            {
-                // 估算：收到 N 个数据包，预期应有 N * (1 + 1/5) 个包（含 FEC）
-                // 简化：直接用帧完整性统计
-                float total_frames_expected = static_cast<float>(total_frames_ + total_lost_frames_);
-                if (total_frames_expected > 0)
-                    st.loss_rate = static_cast<float>(total_lost_frames_) / total_frames_expected * 100.0f;
-            }
-
-            // 带宽估算：每秒字节数 × 8 / 1000
-            uint64_t bytes_delta = total_bytes_ - last_stats_bytes_;
-            st.estimated_bandwidth_kbps = static_cast<int>(bytes_delta * 8 / 1000);
-
-            stats_callback_(st);
-
-            // 重置基线
-            last_stats_time_ = now;
-            last_stats_packets_ = total_packets_;
-            last_stats_frames_ = total_frames_;
-            last_stats_bytes_ = total_bytes_;
-            last_fec_recovered_ = reassembler_.GetFecRecoveredCount();
-            last_fec_failed_ = reassembler_.GetFecFailCount();
-        }
+        ReportStats();
 
         // ---- 第四步：包装成 AVPacket 推入队列 ----
-        // av_new_packet 分配的 buffer 会自动释放，下游 av_packet_free 时回收
-        AVPacket* pkt = av_packet_alloc();
-        if (!pkt)
-            continue;
-
-        int ret = av_new_packet(pkt, static_cast<int>(frame_data.size()));
-        if (ret < 0)
-        {
-            av_packet_free(&pkt);
-            continue;
-        }
-
-        // 拷贝帧数据到 AVPacket
-        memcpy(pkt->data, frame_data.data(), frame_data.size());
-
-        // 关键帧标记
-        if (reassembler_.IsKeyFrame())
-        {
-            pkt->flags |= AV_PKT_FLAG_KEY;
-        }
-
-        // 设置 PTS（用时间戳，单位毫秒 → 转为 1/90000 时基与 H.264 约定一致）
-        pkt->pts = static_cast<int64_t>(reassembler_.GetTimestamp()) * 90;
-        pkt->dts = pkt->pts;
-
-        // 推入队列给 VideoDecoder 消费
-        packet_queue_->Push(pkt);
+        BuildAndEnqueuePacket(frame_data);
     }
 
     qDebug() << "[VideoReceiver] 接收线程退出";
+}
+
+void VideoReceiver::RecordSenderIP(const sockaddr_in& from_addr)
+{
+    char ip_str[INET_ADDRSTRLEN] = {};
+    inet_ntop(AF_INET, &from_addr.sin_addr, ip_str, sizeof(ip_str));
+    sender_ip_ = ip_str;
+    qDebug() << "[VideoReceiver] 发送方 IP:" << sender_ip_.c_str();
+
+    if (sender_ip_cb_)
+        sender_ip_cb_(sender_ip_);
+}
+
+void VideoReceiver::HandleFrameLossAndIdr(uint16_t current_frame)
+{
+    // 同步 FEC 恢复统计（NalReassembler 内部累计）
+    fec_recovered_frames_ = reassembler_.GetFecRecoveredCount();
+
+    if (expected_frame_index_ == 0)
+    {
+        expected_frame_index_ = (current_frame + 1) & 0xFFFF;
+        return;                                             // 首帧：初始化期望值，不判定丢包
+    }
+
+    // 检查帧序号连续性
+    uint16_t diff = (current_frame - expected_frame_index_) & 0xFFFF;
+    if (diff != 0)
+    {
+        // 跳帧 = 丢帧（diff=0 正常，diff>0 有丢帧）
+        int skipped = static_cast<int>(diff);
+        total_lost_frames_ += skipped;
+        consecutive_lost_frames_ += skipped;
+
+        LogManager::Log("WARN", "[VideoReceiver] 丢帧检测: 期望 %d, 实际 %d, 跳过 %d 帧, 连续丢 %d, FEC恢复 %d",
+                        expected_frame_index_, current_frame, skipped, consecutive_lost_frames_,
+                        fec_recovered_frames_);
+
+        // 连续丢帧超过阈值 → 请求 IDR
+        if (consecutive_lost_frames_ >= MAX_CONSECUTIVE_LOST)
+        {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - last_idr_request_time_).count();
+
+            if (elapsed >= IDR_REQUEST_TIMEOUT_MS)
+            {
+                LogManager::Log("WARN", "[VideoReceiver] 连续丢 %d 帧，请求 IDR",
+                                consecutive_lost_frames_);
+                if (idr_request_callback_)
+                    idr_request_callback_();
+                last_idr_request_time_ = now;
+                consecutive_lost_frames_ = 0;           // 重置，等 IDR 到达
+            }
+        }
+    }
+    else
+    {
+        // 正常连续帧
+        consecutive_lost_frames_ = 0;
+    }
+
+    expected_frame_index_ = (current_frame + 1) & 0xFFFF;
+}
+
+void VideoReceiver::ReportStats()
+{
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - last_stats_time_).count();
+    if (elapsed_ms < 1000 || !stats_callback_)
+        return;
+
+    NetworkStats st;
+    st.receive_fps = static_cast<int>(total_frames_ - last_stats_frames_);
+    receive_fps_.store(st.receive_fps);
+    st.fec_recovered = reassembler_.GetFecRecoveredCount() - last_fec_recovered_;
+    st.fec_failed = reassembler_.GetFecFailCount() - last_fec_failed_;
+    st.lost_frames = total_lost_frames_;
+
+    // 丢包率：基于帧完整性统计（粗略估算）
+    uint64_t pkts_received = total_packets_ - last_stats_packets_;
+    if (pkts_received > 0)
+    {
+        float total_frames_expected = static_cast<float>(total_frames_ + total_lost_frames_);
+        if (total_frames_expected > 0)
+            st.loss_rate = static_cast<float>(total_lost_frames_) / total_frames_expected * 100.0f;
+    }
+
+    // 带宽估算：每秒字节数 × 8 / 1000
+    uint64_t bytes_delta = total_bytes_ - last_stats_bytes_;
+    st.estimated_bandwidth_kbps = static_cast<int>(bytes_delta * 8 / 1000);
+
+    stats_callback_(st);
+
+    // 重置基线
+    last_stats_time_ = now;
+    last_stats_packets_ = total_packets_;
+    last_stats_frames_ = total_frames_;
+    last_stats_bytes_ = total_bytes_;
+    last_fec_recovered_ = reassembler_.GetFecRecoveredCount();
+    last_fec_failed_ = reassembler_.GetFecFailCount();
+}
+
+void VideoReceiver::BuildAndEnqueuePacket(const std::vector<uint8_t>& frame_data)
+{
+    // ---- 包装成 AVPacket 推入队列 ----
+    // av_new_packet 分配的 buffer 会自动释放，下游 av_packet_free 时回收
+    AVPacket* pkt = av_packet_alloc();
+    if (!pkt)
+        return;
+
+    int ret = av_new_packet(pkt, static_cast<int>(frame_data.size()));
+    if (ret < 0)
+    {
+        av_packet_free(&pkt);
+        return;
+    }
+
+    // 拷贝帧数据到 AVPacket
+    memcpy(pkt->data, frame_data.data(), frame_data.size());
+
+    // 关键帧标记
+    if (reassembler_.IsKeyFrame())
+        pkt->flags |= AV_PKT_FLAG_KEY;
+
+    // 设置 PTS（用时间戳，单位毫秒 → 转为 1/90000 时基与 H.264 约定一致）
+    pkt->pts = static_cast<int64_t>(reassembler_.GetTimestamp()) * 90;
+    pkt->dts = pkt->pts;
+
+    // 直播模式不能让压缩包无限排队；一旦解码端追不上，丢旧帧并请求 IDR 追到最新画面。
+    if (packet_queue_->Size() >= kMaxStreamingPacketQueue)
+    {
+        int dropped = 0;
+        AVPacket* old_pkt = nullptr;
+        while (packet_queue_->Size() > kKeepStreamingPacketQueue &&
+               packet_queue_->TryPop(old_pkt))
+        {
+            av_packet_free(&old_pkt);
+            dropped++;
+        }
+
+        if (dropped > 0)
+        {
+            queue_dropped_frames_ += dropped;
+
+            auto drop_now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                drop_now - last_queue_drop_log_time_).count();
+            if (last_queue_drop_log_time_ == std::chrono::steady_clock::time_point{} ||
+                elapsed >= 1000)
+            {
+                LogManager::Log("WARN", "[VideoReceiver] 解码队列堆积，丢弃旧压缩帧: dropped=%d total=%d queue=%zu",
+                                dropped, queue_dropped_frames_, packet_queue_->Size());
+                last_queue_drop_log_time_ = drop_now;
+            }
+
+            auto idr_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                drop_now - last_idr_request_time_).count();
+            if (idr_request_callback_ &&
+                (last_idr_request_time_ == std::chrono::steady_clock::time_point{} ||
+                 idr_elapsed >= IDR_REQUEST_TIMEOUT_MS))
+            {
+                idr_request_callback_();
+                last_idr_request_time_ = drop_now;
+            }
+        }
+    }
+
+    // 推入队列给 VideoDecoder 消费
+    packet_queue_->Push(pkt);
 }
 
 VideoReceiver::VideoReceiver()

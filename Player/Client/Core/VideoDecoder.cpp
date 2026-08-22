@@ -42,6 +42,9 @@ bool VideoDecoder::OpenVideo(AVCodecParameters* video_par, bool try_hardware)
     // ---- 第二步：分配上下文 ----
     AVCodecContext* ctx = avcodec_alloc_context3(codec);
     avcodec_parameters_to_context(ctx, video_par);
+    ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
+    ctx->flags2 |= AV_CODEC_FLAG2_FAST;
+    ctx->thread_count = 1;
 
     // ---- 第三步：尝试 D3D11VA 硬解 ----
     is_hardware_ = false;

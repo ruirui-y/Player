@@ -7,7 +7,7 @@
 
 // 帧计数器（OSD FPS 统计用）
 // 每次 Present 时调用 OnFramePresented()，每秒计算一次 FPS
-// Present(1,0) 自身已提供 VSync 同步，Pacer 不再额外等待
+// 低延迟串流使用立即 Present，Pacer 只负责统计渲染 FPS，不额外等待
 class Pacer
 {
 public:

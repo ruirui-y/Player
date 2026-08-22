@@ -72,7 +72,7 @@ void D3D11Pipeline::Clear()
     d3d11_ctx_->ClearRenderTargetView(rtv_, black);
 
     // Present 上屏
-    swapchain_->Present(1, 0);
+    swapchain_->Present(0, 0);
 }
 
 // 用外部 D3D11 设备创建交换链和着色器
@@ -276,7 +276,7 @@ void D3D11Pipeline::Execute(
     // ---- 第四步：Draw + Present ----
     // 画一个覆盖全屏的三角形 → 像素着色器对每个像素做 NV12→RGB → Present 上屏
     d3d11_ctx_->Draw(3, 0);
-    swapchain_->Present(1, 0);
+    swapchain_->Present(0, 0);
 
     // ---- 第五步：清理本帧绑定的 SRV（不影响下一帧） ----
     ID3D11ShaderResourceView* null_srvs[] = { nullptr, nullptr };
